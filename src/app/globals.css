@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fafaf9;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+.admin-shell {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84) 0%, rgba(255, 255, 255, 0.42) 36%, rgba(255, 255, 255, 0.08) 100%),
+    linear-gradient(135deg, #fff9fb 0%, #fff3f6 38%, #faf1ed 100%);
+}
+
+.admin-header {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 10px 30px rgba(190, 18, 60, 0.05);
+}
+
+@keyframes sweet-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  outline-color: #be123c;
+}
+
+@layer components {
+  .admin-input {
+    @apply h-11 w-full rounded-lg border border-zinc-200 bg-white px-4 text-sm text-zinc-950 shadow-sm transition placeholder:text-zinc-400 focus:border-rose-400 focus:bg-white;
+  }
+
+  textarea.admin-input {
+    @apply h-auto py-3 leading-6;
+  }
+
+  .admin-primary-button {
+    @apply inline-flex min-h-11 items-center justify-center rounded-lg bg-zinc-950 px-5 py-3 text-sm font-semibold uppercase tracking-[0.12em] text-white shadow-sm transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .admin-secondary-button {
+    @apply inline-flex min-h-11 items-center justify-center rounded-lg border border-zinc-200 bg-white px-5 py-3 text-sm font-semibold uppercase tracking-[0.12em] text-zinc-950 shadow-sm transition hover:border-rose-300 hover:bg-rose-50;
+  }
+}

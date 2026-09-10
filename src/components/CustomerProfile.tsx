@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { PaymentReceiptUploadForm } from "@/components/UploadForms";
-import { apiRequest, publicAssetUrl } from "@/lib/api";
+import { PrivateFileLink } from "@/components/PrivateFileLink";
+import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { Address, Department, District, Order, OrderItem, Payment, PaymentReceipt, Province, Shipment, ShipmentEvent, UserAccount } from "@/lib/types";
+import type { Address, Department, District, OlvaTrackingResponse, Order, OrderItem, Payment, PaymentReceipt, Province, Shipment, ShipmentEvent, UserAccount } from "@/lib/types";
 
 type ProfileSection = "orders" | "tracking" | "receipts" | "profile";
 
@@ -179,12 +180,13 @@ export function CustomerProfile() {
       {isLoading ? <p className="rounded-2xl border border-zinc-200 bg-white p-6 text-sm text-zinc-500">Cargando tu perfil...</p> : null}
 
       {currentSection === "orders" ? <OrdersPanel itemsByOrder={itemsByOrder} orders={orders} paymentsByOrder={paymentsByOrder} /> : null}
-      {currentSection === "tracking" ? <TrackingPanel eventsByShipment={eventsByShipment} orders={orders} shipmentsByOrder={shipmentsByOrder} /> : null}
+      {currentSection === "tracking" ? <TrackingPanel eventsByShipment={eventsByShipment} orders={orders} shipmentsByOrder={shipmentsByOrder} token={token} /> : null}
       {currentSection === "receipts" ? (
         <ReceiptsPanel
           orders={orders}
           paymentsByOrder={paymentsByOrder}
           receiptsByPayment={receiptsByPayment}
+          token={token}
           onReceiptUploaded={() => setProfileVersion((version) => version + 1)}
         />
       ) : null}
@@ -237,8 +239,27 @@ function OrdersPanel({ orders, itemsByOrder, paymentsByOrder }: { orders: Order[
   );
 }
 
-function TrackingPanel({ orders, shipmentsByOrder, eventsByShipment }: { orders: Order[]; shipmentsByOrder: Record<string, Shipment[]>; eventsByShipment: Record<string, ShipmentEvent[]> }) {
+function TrackingPanel({ orders, shipmentsByOrder, eventsByShipment, token }: { orders: Order[]; shipmentsByOrder: Record<string, Shipment[]>; eventsByShipment: Record<string, ShipmentEvent[]>; token: string | null }) {
   const trackedOrders = orders.filter((order) => (shipmentsByOrder[order.id] ?? []).length > 0);
+  const [liveTrackingByShipment, setLiveTrackingByShipment] = useState<Record<string, OlvaTrackingResponse>>({});
+  const [trackingShipmentId, setTrackingShipmentId] = useState<string | null>(null);
+  const [trackingMessage, setTrackingMessage] = useState("");
+
+  async function trackWithOlva(orderId: string, shipment: Shipment) {
+    setTrackingShipmentId(shipment.id);
+    setTrackingMessage("");
+    try {
+      const tracking = await apiRequest<OlvaTrackingResponse>(`/api/shipping/olva/customer/orders/${orderId}/track`, {
+        method: "POST",
+        token,
+      });
+      setLiveTrackingByShipment((current) => ({ ...current, [shipment.id]: tracking }));
+    } catch (error) {
+      setTrackingMessage(error instanceof Error ? error.message : "No se pudo consultar el seguimiento de Olva.");
+    } finally {
+      setTrackingShipmentId(null);
+    }
+  }
 
   return (
     <section className="grid gap-4">
@@ -254,6 +275,19 @@ function TrackingPanel({ orders, shipmentsByOrder, eventsByShipment }: { orders:
               </div>
               <p className="h-fit rounded-full bg-zinc-950 px-4 py-2 text-sm font-semibold text-white">{formatMoney(shipment.shippingCost, shipment.currency)}</p>
             </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                className="admin-secondary-button"
+                disabled={trackingShipmentId === shipment.id || !shipment.trackingCode}
+                type="button"
+                onClick={() => void trackWithOlva(order.id, shipment)}
+              >
+                {trackingShipmentId === shipment.id ? "Consultando Olva..." : "Actualizar con Olva"}
+              </button>
+              {!shipment.trackingCode ? <p className="text-xs text-zinc-500">El seguimiento estará disponible cuando el administrador registre el código Olva.</p> : null}
+            </div>
+            {trackingMessage ? <p className="mt-3 rounded-xl border border-rose-100 bg-rose-50 p-3 text-sm text-rose-900">{trackingMessage}</p> : null}
+            {liveTrackingByShipment[shipment.id] ? <OlvaTrackingSummary tracking={liveTrackingByShipment[shipment.id]} /> : null}
             <div className="mt-5 space-y-3 border-l-2 border-rose-100 pl-4">
               {(eventsByShipment[shipment.id] ?? []).length === 0 ? <p className="text-sm text-zinc-500">Aun no hay eventos de seguimiento.</p> : null}
               {(eventsByShipment[shipment.id] ?? []).map((event) => (
@@ -271,15 +305,41 @@ function TrackingPanel({ orders, shipmentsByOrder, eventsByShipment }: { orders:
   );
 }
 
+function OlvaTrackingSummary({ tracking }: { tracking: OlvaTrackingResponse }) {
+  return (
+    <div className="mt-4 rounded-2xl border border-teal-100 bg-teal-50/50 p-4 text-sm">
+      <div className="flex flex-wrap justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal-700">Respuesta de Olva</p>
+          <p className="mt-1 font-semibold">{tracking.statusDetail ?? tracking.status ?? "Estado actualizado"}</p>
+        </div>
+        {tracking.estimatedDelivery ? <p className="text-teal-900">Entrega estimada: {tracking.estimatedDelivery}</p> : null}
+      </div>
+      {tracking.events.length > 0 ? (
+        <div className="mt-3 space-y-2">
+          {tracking.events.map((event, index) => (
+            <div className="rounded-xl bg-white/70 px-3 py-2" key={`${event.date ?? "event"}-${index}`}>
+              <p className="font-semibold">{event.detail ?? event.status ?? "Actualización"}</p>
+              <p className="mt-1 text-xs text-zinc-500">{event.location ?? "Olva Courier"}{event.date ? ` - ${event.date}` : ""}</p>
+            </div>
+          ))}
+        </div>
+      ) : <p className="mt-3 text-zinc-600">Olva no devolvió eventos detallados para este envío.</p>}
+    </div>
+  );
+}
+
 function ReceiptsPanel({
   orders,
   paymentsByOrder,
   receiptsByPayment,
+  token,
   onReceiptUploaded,
 }: {
   orders: Order[];
   paymentsByOrder: Record<string, Payment[]>;
   receiptsByPayment: Record<string, PaymentReceipt[]>;
+  token: string | null;
   onReceiptUploaded: () => void;
 }) {
   const orderById = useMemo(() => new Map(orders.map((order) => [order.id, order])), [orders]);
@@ -303,10 +363,15 @@ function ReceiptsPanel({
             <div className="mt-4 grid gap-3">
               {(receiptsByPayment[payment.id] ?? []).length === 0 ? <p className="rounded-xl border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">Aun no adjuntaste comprobante.</p> : null}
               {(receiptsByPayment[payment.id] ?? []).map((receipt) => (
-                <a className="rounded-xl border border-zinc-200 p-4 text-sm hover:border-rose-300" href={publicAssetUrl(receipt.fileUrl)} key={receipt.id} target="_blank">
-                  <span className="font-semibold">Comprobante {formatReceiptStatus(receipt.status)}</span>
-                  <span className="mt-1 block text-zinc-500">{receipt.operationCode ?? "Sin codigo"} - {receipt.declaredAmount ? formatMoney(receipt.declaredAmount, receipt.currency ?? payment.currency) : "Sin monto declarado"}</span>
-                </a>
+                <div key={receipt.id}>
+                  <PrivateFileLink
+                    className="rounded-xl border border-zinc-200 p-4 text-sm hover:border-rose-300"
+                    label={`Comprobante ${formatReceiptStatus(receipt.status)}`}
+                    path={`/api/payment-receipts/${receipt.id}/file`}
+                    token={token}
+                  />
+                  <p className="-mt-2 px-4 text-xs text-zinc-500">{receipt.operationCode ?? "Sin codigo"} - {receipt.declaredAmount ? formatMoney(receipt.declaredAmount, receipt.currency ?? payment.currency) : "Sin monto declarado"}</p>
+                </div>
               ))}
             </div>
             {isPaymentEditableByCustomer(payment, orderById.get(payment.orderId)) ? (

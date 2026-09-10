@@ -23,7 +23,6 @@
 # misc
 .DS_Store
 *.pem
-/public/mock-products/
 
 # debug
 npm-debug.log*
@@ -33,9 +32,13 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.local.example
 
 # vercel
 .vercel
+
+# local catalog mock assets
+/public/mock-products/
 
 # typescript
 *.tsbuildinfo

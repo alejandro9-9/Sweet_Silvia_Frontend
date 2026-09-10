@@ -86,6 +86,7 @@ function CouponsPanel({ isAdmin, onMessage, token }: PanelProps & { isAdmin: boo
   const [categories, setCategories] = useState<Category[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [selectedCouponId, setSelectedCouponId] = useState("");
   const [restrictions, setRestrictions] = useState<CouponRestriction[]>([]);
   const [usages, setUsages] = useState<Array<Record<string, unknown>>>([]);
@@ -102,18 +103,20 @@ function CouponsPanel({ isAdmin, onMessage, token }: PanelProps & { isAdmin: boo
   const [restrictionForm, setRestrictionForm] = useState({ categoryId: "", productId: "", productVariantId: "", collectionId: "" });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function load() {
+  async function load(preferredCouponId = selectedCouponId) {
     const [nextCoupons, nextCategories, nextCollections, nextProducts] = await Promise.all([
       apiRequest<Coupon[]>("/api/coupons?onlyActive=false", { token }),
       apiRequest<Category[]>("/api/categories?onlyActive=true"),
       apiRequest<Collection[]>("/api/collections?onlyActive=true"),
       apiRequest<Product[]>("/api/products?onlyActive=true"),
     ]);
+    const nextVariants = (await Promise.all(nextProducts.map((product) => apiRequest<ProductVariant[]>(`/api/product-variants/product/${product.id}?onlyActive=true`).catch(() => [])))).flat();
     setCoupons(nextCoupons);
     setCategories(nextCategories);
     setCollections(nextCollections);
     setProducts(nextProducts);
-    const nextId = selectedCouponId || nextCoupons[0]?.id || "";
+    setVariants(nextVariants);
+    const nextId = nextCoupons.some((coupon) => coupon.id === preferredCouponId) ? preferredCouponId : nextCoupons[0]?.id || "";
     setSelectedCouponId(nextId);
     if (nextId) {
       const nextRestrictions = await apiRequest<CouponRestriction[]>("/api/coupon-restrictions/coupon/" + nextId, { token });
@@ -163,7 +166,7 @@ function CouponsPanel({ isAdmin, onMessage, token }: PanelProps & { isAdmin: boo
       });
       onMessage("Cupon creado y sus reglas guardadas.");
       setSelectedCouponId(created.id);
-      await load();
+      await load(created.id);
     } catch (error) {
       onMessage(error instanceof Error ? error.message : "No se pudo crear el cupon.");
     } finally {
@@ -252,6 +255,7 @@ function CouponsPanel({ isAdmin, onMessage, token }: PanelProps & { isAdmin: boo
         {isAdmin ? <form className="mt-4 space-y-3" onSubmit={addRestriction}>
           <Field label="Categoria"><select className="admin-input" value={restrictionForm.categoryId} onChange={(e) => setRestrictionForm({ ...restrictionForm, categoryId: e.target.value })}><option value="">Sin categoria</option>{categories.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></Field>
           <Field label="Producto"><select className="admin-input" value={restrictionForm.productId} onChange={(e) => setRestrictionForm({ ...restrictionForm, productId: e.target.value })}><option value="">Sin producto</option>{products.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></Field>
+          <Field label="Variante"><select className="admin-input" value={restrictionForm.productVariantId} onChange={(e) => setRestrictionForm({ ...restrictionForm, productVariantId: e.target.value })}><option value="">Sin variante</option>{variants.map((entry) => <option key={entry.id} value={entry.id}>{products.find((product) => product.id === entry.productId)?.name ?? "Producto"} - {entry.size} {entry.color} - {entry.sku}</option>)}</select></Field>
           <Field label="Coleccion"><select className="admin-input" value={restrictionForm.collectionId} onChange={(e) => setRestrictionForm({ ...restrictionForm, collectionId: e.target.value })}><option value="">Sin coleccion</option>{collections.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></Field>
           <button className="admin-secondary-button w-full" disabled={!selectedCouponId}>Agregar restriccion</button>
         </form> : null}
@@ -270,7 +274,7 @@ function PaymentsPanel({ onMessage, token }: PanelProps) {
   async function load() {
     const nextMethods = await apiRequest<PaymentMethod[]>("/api/payment-methods");
     setMethods(nextMethods);
-    setSelectedId((current) => current || nextMethods[0]?.id || "");
+    setSelectedId((current) => nextMethods.some((method) => method.id === current) ? current : nextMethods[0]?.id || "");
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { const timeoutId = window.setTimeout(() => { void load().catch((error: Error) => onMessage(error.message)); }, 0); return () => window.clearTimeout(timeoutId); }, [token]);
@@ -362,6 +366,10 @@ function ShippingPanel({ isAdmin, onMessage, token }: PanelProps & { isAdmin: bo
 
   async function saveCourier(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!isAdmin) {
+      onMessage("Solo el administrador modifica couriers.");
+      return;
+    }
     try {
       if (selectedCourierId) await apiRequest<void>("/api/couriers/" + selectedCourierId, { method: "PUT", token, body: courierForm });
       else await apiRequest<CreatedResponse>("/api/couriers", { method: "POST", token, body: courierForm });
@@ -375,6 +383,10 @@ function ShippingPanel({ isAdmin, onMessage, token }: PanelProps & { isAdmin: bo
   }
   async function saveRate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!isAdmin) {
+      onMessage("Solo el administrador modifica tarifas.");
+      return;
+    }
     try {
       const body = { ...rateForm, provinceId: rateForm.provinceId || null, districtId: rateForm.districtId || null, cost: Number(rateForm.cost), freeShippingMinimumAmount: rateForm.freeShippingMinimumAmount ? Number(rateForm.freeShippingMinimumAmount) : null, estimatedTime: rateForm.estimatedTime || null };
       if (selectedRateId) await apiRequest<void>("/api/shipping-rates/" + selectedRateId, { method: "PUT", token, body });
@@ -429,7 +441,7 @@ function UbigeoPanel({ onMessage, token }: PanelProps) {
       if (mode === "district" && selectedDistrict) setForm({ name: selectedDistrict.name, destinationType: "province", ubigeo: selectedDistrict.ubigeo ?? "" });
     }, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [departmentId, districts, isNew, mode, provinceId, provinces, selectedDistrictId]);
+  }, [departmentId, departments, districts, isNew, mode, provinceId, provinces, selectedDistrictId]);
 
   function chooseMode(nextMode: "department" | "province" | "district") { setMode(nextMode); setIsNew(true); setForm({ name: "", destinationType: "province", ubigeo: "" }); setSelectedDistrictId(""); }
   async function save(event: FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>) {
@@ -483,7 +495,9 @@ function StockPanel({ onMessage, token }: PanelProps) {
     const next = Number(newStock);
     if (!Number.isInteger(next) || next < 0) { onMessage("El stock debe ser un entero mayor o igual a cero."); return; }
     try {
-      await apiRequest<CreatedResponse>("/api/stock-movements/manual-adjustment", { method: "POST", token, body: { productVariantId: selectedVariant.id, orderId: null, quantity: next - selectedVariant.physicalStock, previousStock: selectedVariant.physicalStock, newStock: next, observation: observation.trim() || null } });
+      const difference = next - selectedVariant.physicalStock;
+      if (difference === 0) { onMessage("El nuevo stock debe ser diferente al stock actual."); return; }
+      await apiRequest<CreatedResponse>("/api/stock-movements/manual-adjustment", { method: "POST", token, body: { productVariantId: selectedVariant.id, orderId: null, quantity: Math.abs(difference), previousStock: selectedVariant.physicalStock, newStock: next, observation: observation.trim() || null } });
       onMessage("Stock actualizado y movimiento auditado."); setObservation(""); setNewStock(""); await load();
     } catch (error) { onMessage(error instanceof Error ? error.message : "No se pudo ajustar el stock."); }
   }
@@ -499,7 +513,7 @@ function SecurityPanel({ onMessage, token }: PanelProps) {
   const [roleName, setRoleName] = useState("");
   async function load() {
     const [nextUsers, nextRoles] = await Promise.all([apiRequest<UserAccount[]>("/api/users", { token }), apiRequest<Role[]>("/api/roles?onlyActive=false", { token })]);
-    setUsers(nextUsers); setRoles(nextRoles); setSelectedUserId((current) => current || nextUsers[0]?.id || ""); setSelectedRoleId((current) => current || nextRoles[0]?.id || "");
+    setUsers(nextUsers); setRoles(nextRoles); setSelectedUserId((current) => current || nextUsers[0]?.id || ""); setSelectedRoleId((current) => current || nextUsers[0]?.roleId || nextRoles[0]?.id || "");
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { const timeoutId = window.setTimeout(() => { void load().catch((error: Error) => onMessage(error.message)); }, 0); return () => window.clearTimeout(timeoutId); }, [token]);
@@ -522,19 +536,46 @@ function SecurityPanel({ onMessage, token }: PanelProps) {
     try { await apiRequest<CreatedResponse>("/api/roles", { method: "POST", token, body: { id: null, name: roleName.trim() } }); setRoleName(""); onMessage("Rol creado."); await load(); }
     catch (error) { onMessage(error instanceof Error ? error.message : "No se pudo crear el rol."); }
   }
+  async function updateRole() {
+    if (!selectedRoleId || !roleName.trim()) return;
+    try {
+      await apiRequest<void>("/api/roles/" + selectedRoleId, { method: "PUT", token, body: { name: roleName.trim() } });
+      setRoleName("");
+      onMessage("Rol actualizado.");
+      await load();
+    } catch (error) { onMessage(error instanceof Error ? error.message : "No se pudo actualizar el rol."); }
+  }
+  async function deleteRole() {
+    if (!selectedRoleId || !window.confirm("Se desactivara este rol. Continuar?")) return;
+    try {
+      await apiRequest<void>("/api/roles/" + selectedRoleId, { method: "DELETE", token });
+      setSelectedRoleId("");
+      setRoleName("");
+      onMessage("Rol desactivado.");
+      await load();
+    } catch (error) { onMessage(error instanceof Error ? error.message : "No se pudo desactivar el rol."); }
+  }
   const selectedUser = users.find((entry) => entry.id === selectedUserId);
-  return <div className="grid gap-6 xl:grid-cols-2"><section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"><PanelTitle title="Usuarios y roles" text="Bloquea cuentas, asigna roles y revisa el estado de acceso." /><EntityList title="Usuarios" items={users.map((entry) => ({ id: entry.id, name: entry.email, detail: entry.status }))} selectedId={selectedUserId} onSelect={setSelectedUserId} /><select className="admin-input mt-4" value={selectedRoleId} onChange={(e) => setSelectedRoleId(e.target.value)}>{roles.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select><div className="mt-3 flex flex-wrap gap-2"><button className="admin-primary-button" onClick={() => void changeRole()} type="button">Asignar rol</button>{selectedUser?.status === "blocked" ? <button className="admin-secondary-button" onClick={() => void changeStatus(selectedUser.id, "unblock")} type="button">Desbloquear</button> : <button className="admin-secondary-button" onClick={() => void changeStatus(selectedUserId, "block")} type="button">Bloquear</button>}</div><form className="mt-5 flex gap-2" onSubmit={createRole}><input className="admin-input" placeholder="Nuevo rol" required value={roleName} onChange={(e) => setRoleName(e.target.value)} /><button className="admin-secondary-button">Crear rol</button></form></section><section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"><PanelTitle title="Sesiones activas" text="Revoca refresh tokens de un usuario desde el mismo panel." />{refreshTokens.length === 0 ? <p className="mt-5 text-sm text-zinc-500">No hay sesiones registradas.</p> : <div className="mt-5 space-y-3">{refreshTokens.map((entry) => <div className="rounded-lg border border-zinc-200 bg-stone-50 p-3 text-sm" key={entry.id}><p className="font-semibold">{entry.deviceInfo || entry.userAgent || "Dispositivo sin nombre"}</p><p className="mt-1 text-xs text-zinc-500">Creado {formatDate(entry.createdAt)} · expira {formatDate(entry.expiresAt)}</p>{entry.revokedAt ? <p className="mt-1 text-xs text-rose-700">Revocado</p> : <button className="mt-2 text-xs font-semibold uppercase tracking-[0.1em] text-rose-800" onClick={() => void revoke(entry.id)} type="button">Revocar sesion</button>}</div>)}</div>}</section></div>;
+  function selectUser(userId: string) {
+    const nextUser = users.find((entry) => entry.id === userId);
+    setSelectedUserId(userId);
+    if (nextUser) {
+      setSelectedRoleId(nextUser.roleId);
+      setRoleName(roles.find((entry) => entry.id === nextUser.roleId)?.name ?? "");
+    }
+  }
+  return <div className="grid gap-6 xl:grid-cols-2"><section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"><PanelTitle title="Usuarios y roles" text="Bloquea cuentas, asigna roles y revisa el estado de acceso." /><EntityList title="Usuarios" items={users.map((entry) => ({ id: entry.id, name: entry.email, detail: entry.status }))} selectedId={selectedUserId} onSelect={selectUser} /><select className="admin-input mt-4" value={selectedRoleId} onChange={(e) => { const nextRoleId = e.target.value; setSelectedRoleId(nextRoleId); setRoleName(roles.find((entry) => entry.id === nextRoleId)?.name ?? ""); }}>{roles.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select><div className="mt-3 flex flex-wrap gap-2"><button className="admin-primary-button" onClick={() => void changeRole()} type="button">Asignar rol</button>{selectedUser?.status === "blocked" ? <button className="admin-secondary-button" onClick={() => void changeStatus(selectedUser.id, "unblock")} type="button">Desbloquear</button> : <button className="admin-secondary-button" onClick={() => void changeStatus(selectedUserId, "block")} type="button">Bloquear</button>}</div><form className="mt-5 flex gap-2" onSubmit={createRole}><input className="admin-input" placeholder="Nuevo rol" required value={roleName} onChange={(e) => setRoleName(e.target.value)} /><button className="admin-secondary-button">Crear rol</button></form><div className="mt-3 flex flex-wrap gap-2"><button className="admin-secondary-button" disabled={!selectedRoleId || !roleName.trim()} onClick={() => void updateRole()} type="button">Guardar nombre del rol</button><button className="admin-secondary-button" disabled={!selectedRoleId} onClick={() => void deleteRole()} type="button">Desactivar rol</button></div></section><section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"><PanelTitle title="Sesiones activas" text="Revoca refresh tokens de un usuario desde el mismo panel." />{refreshTokens.length === 0 ? <p className="mt-5 text-sm text-zinc-500">No hay sesiones registradas.</p> : <div className="mt-5 space-y-3">{refreshTokens.map((entry) => <div className="rounded-lg border border-zinc-200 bg-stone-50 p-3 text-sm" key={entry.id}><p className="font-semibold">{entry.deviceInfo || entry.userAgent || "Dispositivo sin nombre"}</p><p className="mt-1 text-xs text-zinc-500">Creado {formatDate(entry.createdAt)} · expira {formatDate(entry.expiresAt)}</p>{entry.revokedAt ? <p className="mt-1 text-xs text-rose-700">Revocado</p> : <button className="mt-2 text-xs font-semibold uppercase tracking-[0.1em] text-rose-800" onClick={() => void revoke(entry.id)} type="button">Revocar sesion</button>}</div>)}</div>}</section></div>;
 }
 
 function OlvaPanel({ onMessage, token }: PanelProps) {
   const [result, setResult] = useState<unknown>(null);
-  const [quote, setQuote] = useState({ origin: "", destination: "", deliveryType: "agency", shipmentType: "package", weight: "1", partnerRate: "" });
+  const [quote, setQuote] = useState({ origin: "", destination: "", deliveryType: "O", shipmentType: "1", weight: "1", partnerRate: "false" });
   const [track, setTrack] = useState({ orderNumber: "", orderCode: "" });
   async function validate() { try { setResult(await apiRequest<unknown>("/api/shipping/olva/validate", { token })); onMessage("La API de Olva respondio correctamente."); } catch (error) { onMessage(error instanceof Error ? error.message : "No se pudo validar Olva."); } }
-  async function sync() { try { setResult(await apiRequest<unknown>("/api/shipping/olva/agencies/sync", { method: "POST", token })); onMessage("Agencias Olva sincronizadas."); } catch (error) { onMessage(error instanceof Error ? error.message : "No se pudo sincronizar Olva."); } }
-  async function makeQuote(event: FormEvent<HTMLFormElement>) { event.preventDefault(); try { setResult(await apiRequest<unknown>("/api/shipping/olva/quote", { method: "POST", token, body: { origin: quote.origin.trim(), destination: quote.destination.trim(), deliveryType: quote.deliveryType, shipmentType: quote.shipmentType, weight: Number(quote.weight), partnerRate: quote.partnerRate ? Number(quote.partnerRate) : null } })); onMessage("Cotizacion Olva consultada."); } catch (error) { onMessage(error instanceof Error ? error.message : "No se pudo cotizar el envio."); } }
+  async function sync() { try { setResult(await apiRequest<unknown>("/api/shipping/olva/agencies/sync", { method: "POST", token, body: {} })); onMessage("Agencias Olva sincronizadas."); } catch (error) { onMessage(error instanceof Error ? error.message : "No se pudo sincronizar Olva."); } }
+  async function makeQuote(event: FormEvent<HTMLFormElement>) { event.preventDefault(); try { setResult(await apiRequest<unknown>("/api/shipping/olva/quote", { method: "POST", token, body: { origin: quote.origin.trim(), destination: quote.destination.trim(), deliveryType: quote.deliveryType, shipmentType: quote.shipmentType ? Number(quote.shipmentType) : null, weight: Number(quote.weight), partnerRate: quote.partnerRate === "true" } })); onMessage("Cotizacion Olva consultada."); } catch (error) { onMessage(error instanceof Error ? error.message : "No se pudo cotizar el envio."); } }
   async function makeTrack(event: FormEvent<HTMLFormElement>) { event.preventDefault(); try { setResult(await apiRequest<unknown>("/api/shipping/olva/track", { method: "POST", token, body: track })); onMessage("Seguimiento consultado."); } catch (error) { onMessage(error instanceof Error ? error.message : "No se pudo consultar el seguimiento."); } }
-  return <div className="grid gap-6 xl:grid-cols-2"><section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"><PanelTitle title="Conexion Olva" text="Valida credenciales y actualiza el catalogo de agencias." /><div className="mt-5 flex flex-wrap gap-2"><button className="admin-primary-button" onClick={() => void validate()} type="button">Validar API</button><button className="admin-secondary-button" onClick={() => void sync()} type="button">Sincronizar agencias</button></div><form className="mt-6 space-y-3 border-t border-zinc-200 pt-5" onSubmit={makeQuote}><Field label="Origen"><input className="admin-input" required value={quote.origin} onChange={(e) => setQuote({ ...quote, origin: e.target.value })} /></Field><Field label="Destino"><input className="admin-input" required value={quote.destination} onChange={(e) => setQuote({ ...quote, destination: e.target.value })} /></Field><div className="grid gap-3 sm:grid-cols-2"><Field label="Tipo de entrega"><select className="admin-input" value={quote.deliveryType} onChange={(e) => setQuote({ ...quote, deliveryType: e.target.value })}><option value="agency">Agencia</option><option value="home">Domicilio</option></select></Field><Field label="Peso (kg)"><input className="admin-input" min="0.1" required step="0.1" type="number" value={quote.weight} onChange={(e) => setQuote({ ...quote, weight: e.target.value })} /></Field></div><button className="admin-secondary-button">Cotizar envio</button></form></section><section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"><PanelTitle title="Seguimiento" text="Consulta el estado devuelto por Olva para una orden registrada." /><form className="mt-5 space-y-3" onSubmit={makeTrack}><Field label="Numero de orden"><input className="admin-input" required value={track.orderNumber} onChange={(e) => setTrack({ ...track, orderNumber: e.target.value })} /></Field><Field label="Codigo de orden"><input className="admin-input" value={track.orderCode} onChange={(e) => setTrack({ ...track, orderCode: e.target.value })} /></Field><button className="admin-primary-button">Consultar seguimiento</button></form>{result !== null ? <pre className="mt-6 max-h-96 overflow-auto rounded-lg bg-zinc-950 p-4 text-xs text-white">{JSON.stringify(result, null, 2)}</pre> : null}</section></div>;
+  return <div className="grid gap-6 xl:grid-cols-2"><section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"><PanelTitle title="Conexion Olva" text="Valida credenciales y actualiza el catalogo de agencias." /><div className="mt-5 flex flex-wrap gap-2"><button className="admin-primary-button" onClick={() => void validate()} type="button">Validar API</button><button className="admin-secondary-button" onClick={() => void sync()} type="button">Sincronizar agencias</button></div><form className="mt-6 space-y-3 border-t border-zinc-200 pt-5" onSubmit={makeQuote}><Field label="Origen"><input className="admin-input" required value={quote.origin} onChange={(e) => setQuote({ ...quote, origin: e.target.value })} /></Field><Field label="Destino"><input className="admin-input" required value={quote.destination} onChange={(e) => setQuote({ ...quote, destination: e.target.value })} /></Field><div className="grid gap-3 sm:grid-cols-2"><Field label="Tipo de entrega"><select className="admin-input" value={quote.deliveryType} onChange={(e) => setQuote({ ...quote, deliveryType: e.target.value })}><option value="O">Agencia</option><option value="D">Domicilio</option></select></Field><Field label="Tipo de envio"><select className="admin-input" value={quote.shipmentType} onChange={(e) => setQuote({ ...quote, shipmentType: e.target.value })}><option value="1">Paquete</option><option value="2">Documento</option></select></Field><Field label="Peso (kg)"><input className="admin-input" min="0.1" required step="0.1" type="number" value={quote.weight} onChange={(e) => setQuote({ ...quote, weight: e.target.value })} /></Field><Field label="Tarifa socio"><select className="admin-input" value={quote.partnerRate} onChange={(e) => setQuote({ ...quote, partnerRate: e.target.value })}><option value="false">No</option><option value="true">Si</option></select></Field></div><button className="admin-secondary-button">Cotizar envio</button></form></section><section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"><PanelTitle title="Seguimiento" text="Consulta el estado devuelto por Olva para una orden registrada." /><form className="mt-5 space-y-3" onSubmit={makeTrack}><Field label="Numero de orden"><input className="admin-input" required value={track.orderNumber} onChange={(e) => setTrack({ ...track, orderNumber: e.target.value })} /></Field><Field label="Codigo de orden"><input className="admin-input" value={track.orderCode} onChange={(e) => setTrack({ ...track, orderCode: e.target.value })} /></Field><button className="admin-primary-button">Consultar seguimiento</button></form>{result !== null ? <pre className="mt-6 max-h-96 overflow-auto rounded-lg bg-zinc-950 p-4 text-xs text-white">{JSON.stringify(result, null, 2)}</pre> : null}</section></div>;
 }
 
 type PanelProps = { onMessage: (message: string) => void; token: string | null };

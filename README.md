@@ -1,8 +1,21 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+Sweet Silvia is a Next.js storefront connected to the Sweet Silvia .NET API.
+
+## Local setup
+
+Copy `.env.local.example` to `.env.local` and configure:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8080
+NEXT_PUBLIC_ENABLE_MOCKS=false
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=
+NEXT_PUBLIC_WHATSAPP_PHONE=51941872197
+```
+
+`NEXT_PUBLIC_ENABLE_MOCKS` must remain `false` for real backend checkout. Google requires the OAuth client ID configured for the frontend origin.
 
 ## Getting Started
 
-First, run the development server:
+Run the development server:
 
 ```bash
 npm run dev
@@ -14,7 +27,14 @@ pnpm dev
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). The API should be running at `NEXT_PUBLIC_API_URL` and its CORS allowlist must include the frontend origin.
+
+## Verification
+
+```bash
+npm run lint
+npm run build
+```
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

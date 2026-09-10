@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiRequest, publicAssetUrl } from "@/lib/api";
+import { ApiClientError, apiRequest, publicAssetUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { readGuestCart, removeGuestCartItem, updateGuestCartItemQuantity, writeGuestCart, type GuestCartItem } from "@/lib/cart";
+import { persistCheckoutSession, readCheckoutSession } from "@/lib/checkout-session";
 import { getMockProductImage, isPlaceholderImage } from "@/lib/mock-catalog";
 import type { Address, Cart, CartAppliedCouponSummary, Coupon, CreatedResponse, Department, District, IzipayPaymentLinkResponse, OlvaAgency, PaymentMethod, Product, ProductImage, ProductVariant, Province, ShippingCost, ShippingDestinationType, UserAccount } from "@/lib/types";
 
@@ -47,8 +48,8 @@ type PackageSummary = {
 };
 
 export default function CartPage() {
-  const { token, isReady } = useAuth();
-  const [items, setItems] = useState<GuestCartItem[]>([]);
+  const { token, user, isReady } = useAuth();
+  const [items, setItems] = useState<GuestCartItem[]>(() => readGuestCart());
   const [cartId, setCartId] = useState<string | null>(null);
   const [appliedCoupon, setAppliedCoupon] = useState<CartAppliedCouponSummary | null>(null);
   const [appliedCouponDetails, setAppliedCouponDetails] = useState<Coupon | null>(null);
@@ -60,6 +61,8 @@ export default function CartPage() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [paymentMethodId, setPaymentMethodId] = useState("");
   const [izipayPayMethod, setIzipayPayMethod] = useState("CARD");
+  const [izipayDocument, setIzipayDocument] = useState("");
+  const [izipayPostalCode, setIzipayPostalCode] = useState("");
   const [checkoutStatus, setCheckoutStatus] = useState<CheckoutStatus>("idle");
   const [checkoutMessage, setCheckoutMessage] = useState("");
   const [createdOrderId, setCreatedOrderId] = useState<string | null>(null);
@@ -100,6 +103,20 @@ export default function CartPage() {
   const totalWithDiscount = Math.max(0, total - discount);
   const packageItems = useMemo(() => items.map(toShippingPackageItem), [items]);
   const packageSummary = useMemo(() => calculatePackageSummary(packageItems), [packageItems]);
+
+  useEffect(function restoreCheckoutSession() {
+    if (!isReady) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const stored = readCheckoutSession(user?.id ?? null);
+      setCreatedOrderId(stored?.orderId ?? null);
+      setPaymentLink(stored?.paymentLink ?? null);
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isReady, user?.id]);
 
   const hydrateBackendCart = useCallback(async (cart: Cart, guestItems: GuestCartItem[] = []) => {
     const guestByVariant = new Map(guestItems.filter((item) => item.variantId).map((item) => [item.variantId as string, item]));
@@ -143,7 +160,10 @@ export default function CartPage() {
     let cart: Cart;
     try {
       cart = await apiRequest<Cart>("/api/cart/me", { token });
-    } catch {
+    } catch (error) {
+      if (!(error instanceof ApiClientError) || error.status !== 404) {
+        throw error;
+      }
       const created = await apiRequest<CreatedResponse>("/api/cart", { method: "POST", token });
       cart = await apiRequest<Cart>("/api/cart/me", { token });
       if (!cart.id && created.id) {
@@ -214,8 +234,12 @@ export default function CartPage() {
       .then(([nextAddresses, nextPaymentMethods, nextAccount]) => {
         setAddresses(nextAddresses);
         setSelectedAddressId((currentId) => nextAddresses.some((address) => address.id === currentId) ? currentId : nextAddresses.find((address) => address.isDefault)?.id ?? nextAddresses[0]?.id ?? "");
-        setPaymentMethods(nextPaymentMethods);
-        setPaymentMethodId((currentId) => nextPaymentMethods.some((method) => method.id === currentId) ? currentId : nextPaymentMethods[0]?.id ?? "");
+        const availablePaymentMethods = nextPaymentMethods.filter((method) =>
+          !(method.type === "gateway" && method.requiresExternalIntegration) ||
+          process.env.NEXT_PUBLIC_IZIPAY_ENABLED === "true",
+        );
+        setPaymentMethods(availablePaymentMethods);
+        setPaymentMethodId((currentId) => availablePaymentMethods.some((method) => method.id === currentId) ? currentId : availablePaymentMethods[0]?.id ?? "");
         setAccount(nextAccount);
       })
       .catch(() => setCheckoutMessage("Inicia sesion con una direccion guardada para finalizar la compra."));
@@ -539,10 +563,84 @@ export default function CartPage() {
     }
   }
 
+  async function submitPaymentForOrder(order: { id: string; total: number; currency: string }, paymentMethod: PaymentMethod) {
+    if (paymentMethod.type === "gateway" && paymentMethod.requiresExternalIntegration) {
+      if (process.env.NEXT_PUBLIC_IZIPAY_ENABLED !== "true") {
+        throw new Error("Izipay se habilitara cuando la tienda este desplegada y sus URLs publicas esten configuradas.");
+      }
+
+      const customer = account ?? await apiRequest<UserAccount>("/api/users/me", { token });
+      const address = addresses.find((entry) => entry.id === selectedAddressId);
+      if (!address) {
+        throw new Error("No pudimos recuperar la direccion seleccionada.");
+      }
+
+      const contact = toIzipayContact(
+        customer,
+        address,
+        selectedDistrict?.name ?? address.districtId,
+        selectedDepartment?.name ?? address.departmentId,
+        izipayDocument,
+        izipayPostalCode,
+      );
+      const link = await apiRequest<IzipayPaymentLinkResponse>("/api/payments/izipay/payment-link", {
+        method: "POST",
+        token,
+        body: {
+          orderId: order.id,
+          paymentMethodId: paymentMethod.id,
+          productDescription: `Pedido Sweet Silvia ${order.id.slice(0, 8).toUpperCase()}`,
+          payMethod: izipayPayMethod,
+          billing: contact,
+          shipping: contact,
+        },
+      });
+      setPaymentLink(link);
+      persistCheckoutSession(user?.id ?? null, order.id, link);
+      return;
+    }
+
+    await apiRequest<CreatedResponse>("/api/payments", {
+      method: "POST",
+      token,
+      body: {
+        orderId: order.id,
+        paymentMethodId: paymentMethod.id,
+        amount: order.total,
+        currency: order.currency,
+      },
+    });
+  }
+
+  async function retryPayment() {
+    if (!token || !createdOrderId) {
+      return;
+    }
+
+    const paymentMethod = paymentMethods.find((method) => method.id === paymentMethodId);
+    if (!paymentMethod) {
+      setCheckoutMessage("Selecciona un metodo de pago para reintentar.");
+      return;
+    }
+
+    setCheckoutStatus("submitting");
+    setCheckoutMessage("");
+    try {
+      const order = await apiRequest<{ id: string; total: number; currency: string }>(`/api/orders/${createdOrderId}`, { token });
+      await submitPaymentForOrder(order, paymentMethod);
+      setCheckoutStatus("success");
+      setCheckoutMessage(paymentMethod.requiresManualVerification ? "Pedido creado. Sube tu comprobante desde la seccion de pagos." : "Pago listo para continuar.");
+    } catch (error) {
+      setCheckoutStatus("error");
+      setCheckoutMessage(error instanceof Error ? error.message : "No se pudo reintentar el pago.");
+    }
+  }
+
   async function handleCheckout() {
     setCheckoutStatus("submitting");
     setCheckoutMessage("");
     setPaymentLink(null);
+    let orderCreatedInRequest: string | null = null;
 
     try {
       if (!token) {
@@ -557,6 +655,22 @@ export default function CartPage() {
       if (!selectedShipping || selectedShipping.source !== "backend" || !selectedShipping.shippingRateId) {
         throw new Error("Selecciona una tarifa de envio calculada por el servidor antes de pagar.");
       }
+      const paymentMethod = paymentMethods.find((method) => method.id === paymentMethodId);
+      if (!paymentMethod) {
+        throw new Error("Selecciona un metodo de pago.");
+      }
+      if (paymentMethod.type === "gateway" && paymentMethod.requiresExternalIntegration) {
+        if (process.env.NEXT_PUBLIC_IZIPAY_ENABLED !== "true") {
+          throw new Error("Selecciona un metodo de pago manual mientras Izipay no este habilitado.");
+        }
+
+        if (!/^\d{8}$/.test(izipayDocument)) {
+          throw new Error("Ingresa un DNI valido de 8 digitos para continuar con Izipay.");
+        }
+        if (!/^\d{5,10}$/.test(izipayPostalCode)) {
+          throw new Error("Ingresa el codigo postal de tu direccion para continuar con Izipay.");
+        }
+      }
 
       const createdOrder = await apiRequest<CreatedResponse>("/api/orders", {
         method: "POST",
@@ -564,62 +678,26 @@ export default function CartPage() {
         body: {
           addressId: selectedAddressId,
           shippingRateId: selectedShipping.shippingRateId,
+          shippingAgencyId: selectedDestinationType === "province" ? selectedAgencyId || null : null,
           couponId: appliedCoupon?.couponId ?? null,
         },
       });
       const order = await apiRequest<{ id: string; total: number; currency: string }>(`/api/orders/${createdOrder.id}`, { token });
-      const paymentMethod = paymentMethods.find((method) => method.id === paymentMethodId);
-      if (!paymentMethod) {
-        throw new Error("Selecciona un metodo de pago.");
-      }
-
-      if (paymentMethod.type === "gateway" && paymentMethod.requiresExternalIntegration) {
-        const customer = account ?? await apiRequest<UserAccount>("/api/users/me", { token });
-        const address = addresses.find((entry) => entry.id === selectedAddressId);
-        if (!address) {
-          throw new Error("No pudimos recuperar la direccion seleccionada.");
-        }
-        const contact = toIzipayContact(customer, address);
-        const link = await apiRequest<IzipayPaymentLinkResponse>("/api/payments/izipay/payment-link", {
-          method: "POST",
-          token,
-          body: {
-            orderId: order.id,
-            paymentMethodId: paymentMethod.id,
-            productDescription: `Pedido Sweet Silvia ${order.id.slice(0, 8).toUpperCase()}`,
-            payMethod: izipayPayMethod,
-            billing: contact,
-            shipping: contact,
-          },
-        });
-        setPaymentLink(link);
-        setItems([]);
-        setCartId(null);
-        writeGuestCart([]);
-        setCheckoutStatus("success");
-        setCreatedOrderId(order.id);
-        return;
-      }
-
-      await apiRequest<CreatedResponse>("/api/payments", {
-        method: "POST",
-        token,
-        body: {
-          orderId: order.id,
-          paymentMethodId: paymentMethod.id,
-          amount: order.total,
-          currency: order.currency,
-        },
-      });
+      orderCreatedInRequest = order.id;
+      setCreatedOrderId(order.id);
+      persistCheckoutSession(user?.id ?? null, order.id, null);
       setItems([]);
       setCartId(null);
       writeGuestCart([]);
-      setCreatedOrderId(order.id);
+      await submitPaymentForOrder(order, paymentMethod);
       setCheckoutStatus("success");
-      setCheckoutMessage(paymentMethod.requiresManualVerification ? "Orden creada. Sube tu comprobante desde la seccion de pagos." : "Orden creada correctamente.");
+      setCheckoutMessage(paymentMethod.requiresManualVerification ? "Pedido creado. Sube tu comprobante desde la seccion de pagos." : "Pedido creado correctamente.");
     } catch (error) {
       setCheckoutStatus("error");
-      setCheckoutMessage(error instanceof Error ? error.message : "No se pudo finalizar la compra.");
+      const paymentError = error instanceof Error ? error.message : "No se pudo finalizar la compra.";
+      setCheckoutMessage(orderCreatedInRequest
+        ? `El pedido #${orderCreatedInRequest.slice(0, 8).toUpperCase()} fue creado, pero el pago no termino. Puedes reintentarlo.`
+        : paymentError);
     }
   }
 
@@ -897,12 +975,25 @@ export default function CartPage() {
                   {paymentMethods.map((method) => <option key={method.id} value={method.id}>{method.name}</option>)}
                 </select>
                 {paymentMethods.find((method) => method.id === paymentMethodId)?.type === "gateway" ? (
-                  <select className="admin-input mt-3" value={izipayPayMethod} onChange={(event) => setIzipayPayMethod(event.target.value)}>
-                    <option value="CARD">Tarjeta</option>
-                    <option value="QR">QR</option>
-                    <option value="YAPE_CODE">Codigo Yape</option>
-                    <option value="PAGO_PUSH">Pago push</option>
-                  </select>
+                  <div className="mt-3 space-y-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                    <select className="admin-input" value={izipayPayMethod} onChange={(event) => setIzipayPayMethod(event.target.value)}>
+                      <option value="CARD">Tarjeta</option>
+                      <option value="QR">QR</option>
+                      <option value="YAPE_CODE">Codigo Yape</option>
+                      <option value="PAGO_PUSH">Pago push</option>
+                    </select>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="text-xs font-semibold text-zinc-700">
+                        DNI del titular
+                        <input className="admin-input mt-1" inputMode="numeric" maxLength={8} minLength={8} placeholder="12345678" value={izipayDocument} onChange={(event) => setIzipayDocument(event.target.value.replace(/\D/g, ""))} />
+                      </label>
+                      <label className="text-xs font-semibold text-zinc-700">
+                        Codigo postal
+                        <input className="admin-input mt-1" inputMode="numeric" maxLength={10} minLength={5} placeholder="15000" value={izipayPostalCode} onChange={(event) => setIzipayPostalCode(event.target.value.replace(/\D/g, ""))} />
+                      </label>
+                    </div>
+                    <p className="text-xs leading-5 text-zinc-500">Izipay solicita estos datos para validar el titular y la direccion de facturacion.</p>
+                  </div>
                 ) : null}
                 {addresses.length === 0 ? <p className="mt-3 text-xs text-rose-800">Agrega una direccion desde tu perfil para continuar.</p> : null}
               </div>
@@ -910,6 +1001,7 @@ export default function CartPage() {
               <button className="admin-primary-button w-full" disabled={checkoutStatus === "submitting" || items.length === 0} onClick={() => void handleCheckout()} type="button">
                 {checkoutStatus === "submitting" ? "Procesando..." : "Crear pedido y pagar"}
               </button>
+              {createdOrderId && checkoutStatus === "error" && !paymentLink ? <button className="admin-secondary-button w-full" onClick={() => void retryPayment()} type="button">Reintentar pago del pedido</button> : null}
               {createdOrderId ? <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">Pedido creado: #{createdOrderId.slice(0, 8).toUpperCase()}</p> : null}
               {paymentLink ? <a className="block rounded-lg bg-zinc-950 px-4 py-3 text-center text-sm font-semibold uppercase tracking-[0.1em] text-white" href={paymentLink.paymentUrl} rel="noreferrer" target="_blank">Abrir pago Izipay</a> : null}
               {checkoutMessage ? <p className="rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-5 text-zinc-600">{checkoutMessage}</p> : null}
@@ -1131,18 +1223,18 @@ function isGuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
-function toIzipayContact(account: UserAccount, address: Address) {
+function toIzipayContact(account: UserAccount, address: Address, districtName: string, departmentName: string, document: string, postalCode: string) {
   return {
     firstName: account.name || address.receiverName,
     lastName: `${account.paternalSurname} ${account.maternalSurname ?? ""}`.trim() || address.receiverName,
     email: account.email,
     phoneNumber: address.receiverPhone || account.phone || "",
     street: address.line,
-    postalCode: "",
-    city: address.districtId,
-    state: address.departmentId,
+    postalCode,
+    city: districtName,
+    state: departmentName,
     country: "PE",
     documentType: "DNI",
-    document: "",
+    document,
   };
 }

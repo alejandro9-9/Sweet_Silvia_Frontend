@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest, configureAuthRefresh } from "./api";
+import { clearCheckoutSessionStorage } from "./checkout-session";
 import type { ApiRole, AuthUser, LoginResponse } from "./types";
 
 type AuthContextValue = {
@@ -12,7 +13,7 @@ type AuthContextValue = {
   register: (payload: RegisterPayload) => Promise<AuthUser | null>;
   loginWithGoogle: (credential: string) => Promise<AuthUser | null>;
   logout: () => Promise<void>;
-  refresh: () => Promise<string>;
+  refresh: () => Promise<string | null>;
 };
 
 export type RegisterPayload = {
@@ -29,26 +30,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
   const didRestoreSession = useRef(false);
+  const authChangeVersion = useRef(0);
 
   const persistToken = useCallback((nextToken: string | null) => {
     setToken(nextToken);
   }, []);
 
-  const refresh = useCallback(async () => {
+  const requestRefresh = useCallback(async () => {
     const response = await apiRequest<LoginResponse>("/api/auth/refresh", {
       method: "POST",
       retryOnUnauthorized: false,
     });
-    persistToken(response.token);
     return response.token;
-  }, [persistToken]);
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const requestVersion = authChangeVersion.current;
+    const nextToken = await requestRefresh();
+    if (requestVersion !== authChangeVersion.current) {
+      return null;
+    }
+
+    persistToken(nextToken);
+    setIsReady(true);
+    return nextToken;
+  }, [persistToken, requestRefresh]);
 
   useEffect(function configureApiRefresh() {
     configureAuthRefresh(async () => {
+      const requestVersion = authChangeVersion.current;
       try {
         return await refresh();
       } catch {
-        persistToken(null);
+        if (requestVersion === authChangeVersion.current) {
+          persistToken(null);
+        }
         return null;
       }
     });
@@ -64,8 +80,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     didRestoreSession.current = true;
     let isActive = true;
 
-    refresh()
-      .catch(() => persistToken(null))
+    const restoreVersion = authChangeVersion.current;
+
+    requestRefresh()
+      .then((nextToken) => {
+        if (isActive && restoreVersion === authChangeVersion.current) {
+          persistToken(nextToken);
+        }
+      })
+      .catch(() => {
+        if (isActive && restoreVersion === authChangeVersion.current) {
+          persistToken(null);
+        }
+      })
       .finally(() => {
         if (isActive) {
           setIsReady(true);
@@ -75,15 +102,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       isActive = false;
     };
-  }, [persistToken, refresh]);
+  }, [persistToken, requestRefresh]);
 
   const login = useCallback(
     async (email: string, password: string) => {
+      authChangeVersion.current += 1;
       const response = await apiRequest<LoginResponse>("/api/auth/login", {
         method: "POST",
         body: { email, password },
       });
       persistToken(response.token);
+      setIsReady(true);
       return decodeJwtUser(response.token);
     },
     [persistToken],
@@ -103,6 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginWithGoogle = useCallback(
     async (credential: string) => {
+      authChangeVersion.current += 1;
       const response = await apiRequest<LoginResponse>("/api/auth/google", {
         method: "POST",
         body: {
@@ -111,18 +141,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         },
       });
       persistToken(response.token);
+      setIsReady(true);
       return decodeJwtUser(response.token);
     },
     [persistToken],
   );
 
   const logout = useCallback(async () => {
+    authChangeVersion.current += 1;
     try {
       await apiRequest<void>("/api/auth/logout", {
         method: "POST",
         token,
       });
     } finally {
+      clearCheckoutSessionStorage();
       persistToken(null);
     }
   }, [persistToken, token]);

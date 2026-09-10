@@ -9,7 +9,7 @@ import { readGuestCart } from "@/lib/cart";
 
 export function CartNavLink() {
   const { token, isReady } = useAuth();
-  const [itemCount, setItemCount] = useState(0);
+  const [itemCount, setItemCount] = useState(() => readGuestCart().reduce((total, item) => total + item.quantity, 0));
 
   useEffect(() => {
     const updateItemCount = () => {

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { BrandLogo } from "@/components/BrandLogo";
 import { useAuth } from "@/lib/auth";
 import { canAdminister, canManageCatalog, canUploadPaymentReceipts } from "@/lib/roles";
 import type { ApiRole } from "@/lib/types";
@@ -42,8 +43,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className={isAdminArea ? "admin-shell min-h-screen text-zinc-950" : "min-h-screen bg-stone-50 text-zinc-950"}>
       <header className={isAdminArea ? "admin-header border-b border-rose-100" : "border-b border-zinc-200 bg-white"}>
         <div className="mx-auto flex min-h-16 max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <Link href={homeHref} className="font-serif text-2xl font-semibold tracking-normal">
-            Sweet Silvia
+          <Link aria-label="Ir al inicio de Sweet Silvia" href={homeHref}>
+            <BrandLogo className="w-36 sm:w-40" priority />
           </Link>
 
           <nav className="flex flex-wrap items-center gap-2 text-sm">

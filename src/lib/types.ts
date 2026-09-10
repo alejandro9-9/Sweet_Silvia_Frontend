@@ -72,6 +72,10 @@ export type ProductVariant = {
   physicalStock: number;
   price: number | null;
   currency: string | null;
+  shippingWeightKg: number;
+  shippingLengthCm: number;
+  shippingWidthCm: number;
+  shippingHeightCm: number;
   isActive: boolean;
 };
 
@@ -174,6 +178,7 @@ export type Order = {
   id: string;
   userId: string;
   addressId: string;
+  shippingAgencyId: string | null;
   couponId: string | null;
   status:
     | "pendingReceipt"
@@ -361,7 +366,8 @@ export type IzipayPaymentLinkResponse = {
 export type OrderStatusHistory = {
   id: string;
   orderId: string;
-  status: Order["status"];
+  previousStatus: Order["status"] | null;
+  newStatus: Order["status"];
   changedByUserId: string | null;
   changedAt: string;
   observation: string | null;
@@ -425,6 +431,17 @@ export type ShipmentEvent = {
   description: string;
   location: string | null;
   eventDate: string;
+};
+
+export type OlvaTrackingResponse = {
+  trackingNumber: string | null;
+  status: string | null;
+  statusDetail: string | null;
+  origin: { agency: string | null; department: string | null } | null;
+  destination: { agency: string | null; department: string | null } | null;
+  estimatedDelivery: string | null;
+  deliveredAt: string | null;
+  events: { date: string | null; status: string | null; detail: string | null; location: string | null }[];
 };
 
 export type UploadResult = {

@@ -681,6 +681,10 @@ function VariantEditor({
   const [sku, setSku] = useState("");
   const [physicalStock, setPhysicalStock] = useState("");
   const [price, setPrice] = useState("");
+  const [shippingWeightKg, setShippingWeightKg] = useState("0.3");
+  const [shippingLengthCm, setShippingLengthCm] = useState("30");
+  const [shippingWidthCm, setShippingWidthCm] = useState("22");
+  const [shippingHeightCm, setShippingHeightCm] = useState("4");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -691,6 +695,10 @@ function VariantEditor({
         setSku(selectedVariant.sku);
         setPhysicalStock(String(selectedVariant.physicalStock));
         setPrice(selectedVariant.price === null ? "" : String(selectedVariant.price));
+        setShippingWeightKg(String(selectedVariant.shippingWeightKg));
+        setShippingLengthCm(String(selectedVariant.shippingLengthCm));
+        setShippingWidthCm(String(selectedVariant.shippingWidthCm));
+        setShippingHeightCm(String(selectedVariant.shippingHeightCm));
       }, 0);
       return () => window.clearTimeout(timeoutId);
     }
@@ -703,6 +711,10 @@ function VariantEditor({
     setSku("");
     setPhysicalStock("");
     setPrice("");
+    setShippingWeightKg("0.3");
+    setShippingLengthCm("30");
+    setShippingWidthCm("22");
+    setShippingHeightCm("4");
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -723,6 +735,10 @@ function VariantEditor({
                 color,
                 price: price ? Number(price) : null,
                 currency,
+                shippingWeightKg: Number(shippingWeightKg),
+                shippingLengthCm: Number(shippingLengthCm),
+                shippingWidthCm: Number(shippingWidthCm),
+                shippingHeightCm: Number(shippingHeightCm),
               }
             : {
                 productId: product.id,
@@ -732,6 +748,10 @@ function VariantEditor({
                 physicalStock: Number(physicalStock),
                 price: price ? Number(price) : null,
                 currency,
+                shippingWeightKg: Number(shippingWeightKg),
+                shippingLengthCm: Number(shippingLengthCm),
+                shippingWidthCm: Number(shippingWidthCm),
+                shippingHeightCm: Number(shippingHeightCm),
               },
         token,
       });
@@ -801,6 +821,12 @@ function VariantEditor({
             onChange={(event) => setPrice(event.target.value)}
           />
         </Field>
+        <div className="grid gap-4 rounded-lg border border-zinc-200 bg-stone-50 p-4 sm:grid-cols-4">
+          <Field label="Peso (kg)"><input className="admin-input" min="0.01" step="0.01" type="number" value={shippingWeightKg} onChange={(event) => setShippingWeightKg(event.target.value)} /></Field>
+          <Field label="Largo (cm)"><input className="admin-input" min="0.1" step="0.1" type="number" value={shippingLengthCm} onChange={(event) => setShippingLengthCm(event.target.value)} /></Field>
+          <Field label="Ancho (cm)"><input className="admin-input" min="0.1" step="0.1" type="number" value={shippingWidthCm} onChange={(event) => setShippingWidthCm(event.target.value)} /></Field>
+          <Field label="Alto (cm)"><input className="admin-input" min="0.1" step="0.1" type="number" value={shippingHeightCm} onChange={(event) => setShippingHeightCm(event.target.value)} /></Field>
+        </div>
         <p className="text-xs leading-5 text-zinc-500">
           Si queda vacio, la variante usa el precio base del producto. SKU y stock se mantienen desde inventario al editar.
         </p>

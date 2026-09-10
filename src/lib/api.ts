@@ -73,6 +73,36 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   return payload as T;
 }
 
+export async function apiDownload(path: string, token: string | null) {
+  const createFetchOptions = (activeToken: string | null): RequestInit => ({
+    credentials: "include",
+    headers: activeToken ? { Authorization: `Bearer ${activeToken}` } : {},
+  });
+
+  let response = await fetch(`${API_URL}${path}`, createFetchOptions(token));
+
+  if (response.status === 401 && token && authRefreshHandler && path !== "/api/auth/refresh") {
+    const refreshHandler = authRefreshHandler;
+    authRefreshPromise ??= refreshHandler().finally(() => {
+      authRefreshPromise = null;
+    });
+
+    const refreshedToken = await authRefreshPromise;
+    if (refreshedToken) {
+      response = await fetch(`${API_URL}${path}`, createFetchOptions(refreshedToken));
+    }
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    const payload = text ? safeParseJson(text) : null;
+    const message = payload?.message ?? payload?.error ?? payload?.detail ?? payload?.title ?? "El archivo no pudo abrirse.";
+    throw new ApiClientError(message, response.status, payload);
+  }
+
+  return response.blob();
+}
+
 export function publicAssetUrl(url: string) {
   if (url.startsWith("http://") || url.startsWith("https://")) {
     return url;

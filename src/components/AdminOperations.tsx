@@ -1,10 +1,11 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { apiRequest, publicAssetUrl } from "@/lib/api";
+import { PrivateFileLink } from "@/components/PrivateFileLink";
+import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { canAdminister } from "@/lib/roles";
-import type { AuditLog, Courier, Order, OrderItem, Payment, PaymentReceipt, PaymentReview, Product, Shipment, ShipmentStatus, UserAccount } from "@/lib/types";
+import type { AuditLog, Courier, CreatedResponse, Order, OrderItem, OrderStatusHistory, Payment, PaymentMethod, PaymentReceipt, PaymentReview, Product, Role, Shipment, ShipmentStatus, UserAccount } from "@/lib/types";
 
 type AdminTab = "users" | "orders" | "payments" | "audit";
 type PaymentReviewResult = "approved" | "rejected";
@@ -22,15 +23,39 @@ const orderStatuses: Order["status"][] = [
 
 const shipmentStatuses: ShipmentStatus[] = ["pending", "coordinated", "registered", "inTransit", "delivered", "cancelled", "observed"];
 
+const orderTransitions: Record<Order["status"], Order["status"][]> = {
+  pendingReceipt: ["receiptInReview", "paid", "cancelled", "outOfStock"],
+  receiptInReview: ["pendingReceipt", "paid", "cancelled", "outOfStock"],
+  paid: ["preparing"],
+  preparing: ["shipped"],
+  shipped: ["delivered"],
+  delivered: [],
+  cancelled: [],
+  outOfStock: [],
+};
+
+const shipmentTransitions: Record<ShipmentStatus, ShipmentStatus[]> = {
+  pending: ["coordinated", "registered", "cancelled", "observed"],
+  coordinated: ["registered", "cancelled", "observed"],
+  registered: ["inTransit", "cancelled", "observed"],
+  inTransit: ["delivered", "observed"],
+  delivered: [],
+  cancelled: [],
+  observed: ["coordinated", "registered", "cancelled"],
+};
+
 export function AdminOperations() {
   const { token, user } = useAuth();
   const [activeTab, setActiveTab] = useState<AdminTab>("orders");
   const [users, setUsers] = useState<UserAccount[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
+  const [orderStatusHistory, setOrderStatusHistory] = useState<OrderStatusHistory[]>([]);
   const [selectedPaymentId, setSelectedPaymentId] = useState("");
   const [receipts, setReceipts] = useState<PaymentReceipt[]>([]);
   const [reviews, setReviews] = useState<PaymentReview[]>([]);
@@ -40,7 +65,7 @@ export function AdminOperations() {
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
 
-  const operationalOrders = useMemo(() => orders.filter((order) => order.status !== "pendingReceipt"), [orders]);
+  const operationalOrders = orders;
   const selectedOrder = operationalOrders.find((order) => order.id === selectedOrderId) ?? operationalOrders[0] ?? null;
   const selectedPayment = payments.find((payment) => payment.id === selectedPaymentId) ?? payments[0] ?? null;
   const usersById = useMemo(() => new Map(users.map((entry) => [entry.id, entry])), [users]);
@@ -48,24 +73,28 @@ export function AdminOperations() {
   const productsById = useMemo(() => new Map(products.map((entry) => [entry.id, entry])), [products]);
   const visibleAuditLogs = useMemo(() => auditLogs.filter(isVisibleAuditLog), [auditLogs]);
   const selectedOrderShipments = selectedOrder ? shipmentsByOrder[selectedOrder.id] ?? [] : [];
-  const pendingPayments = payments.filter((payment) => payment.status === "inReview" || payment.status === "pendingReceipt");
+  const cashPaymentMethodIds = useMemo(() => new Set(paymentMethods.filter((method) => method.type === "cash").map((method) => method.id)), [paymentMethods]);
+  const pendingPayments = payments.filter((payment) => payment.status === "inReview" || (payment.status === "pendingReceipt" && cashPaymentMethodIds.has(payment.paymentMethodId)));
   const canManageUsersAndReviews = canAdminister(user?.role);
+  const canReviewSelectedPayment = canManageUsersAndReviews && selectedPayment !== null &&
+    (selectedPayment.status === "inReview" || (selectedPayment.status === "pendingReceipt" && cashPaymentMethodIds.has(selectedPayment.paymentMethodId)));
 
   useEffect(() => {
     let isActive = true;
     const timeoutId = window.setTimeout(() => {
       Promise.all([
         canManageUsersAndReviews ? apiRequest<UserAccount[]>("/api/users", { token }) : Promise.resolve<UserAccount[]>([]),
+        canManageUsersAndReviews ? apiRequest<Role[]>("/api/roles?onlyActive=true", { token }) : Promise.resolve<Role[]>([]),
         apiRequest<Order[]>("/api/orders", { token }),
         apiRequest<Payment[]>("/api/payments", { token }),
+        apiRequest<PaymentMethod[]>("/api/payment-methods?onlyActive=false", { token }),
         canManageUsersAndReviews ? apiRequest<AuditLog[]>("/api/audit-logs", { token }) : Promise.resolve<AuditLog[]>([]),
         apiRequest<Product[]>("/api/products?onlyActive=false", { token }),
         apiRequest<Courier[]>("/api/couriers", { token }).catch(() => []),
       ])
-        .then(async ([nextUsers, nextOrders, nextPayments, nextAuditLogs, nextProducts, nextCouriers]) => {
+        .then(async ([nextUsers, nextRoles, nextOrders, nextPayments, nextPaymentMethods, nextAuditLogs, nextProducts, nextCouriers]) => {
           const shipmentPairs = await Promise.all(
             nextOrders
-              .filter((order) => order.status !== "pendingReceipt")
               .map(async (order) => ({
                 orderId: order.id,
                 shipments: await apiRequest<Shipment[]>(`/api/shipments/order/${order.id}`, { token }).catch(() => []),
@@ -75,13 +104,15 @@ export function AdminOperations() {
             return;
           }
           setUsers(nextUsers);
+          setRoles(nextRoles);
           setOrders(nextOrders);
           setPayments(nextPayments);
+          setPaymentMethods(nextPaymentMethods);
           setProducts(nextProducts);
           setCouriers(nextCouriers);
           setShipmentsByOrder(Object.fromEntries(shipmentPairs.map((entry) => [entry.orderId, entry.shipments])));
           setAuditLogs(sortAuditLogs(nextAuditLogs));
-          setSelectedOrderId(nextOrders.find((order) => order.status !== "pendingReceipt")?.id ?? "");
+          setSelectedOrderId(nextOrders[0]?.id ?? "");
           setSelectedPaymentId(nextPayments[0]?.id ?? "");
         })
         .catch((error: Error) => {
@@ -104,21 +135,29 @@ export function AdminOperations() {
 
   useEffect(() => {
     if (!selectedOrderId) {
-      const timeoutId = window.setTimeout(() => setOrderItems([]), 0);
+      const timeoutId = window.setTimeout(() => {
+        setOrderItems([]);
+        setOrderStatusHistory([]);
+      }, 0);
       return () => window.clearTimeout(timeoutId);
     }
 
     let isActive = true;
     const timeoutId = window.setTimeout(() => {
-      apiRequest<OrderItem[]>(`/api/order-items/order/${selectedOrderId}`, { token })
-        .then((nextItems) => {
+      Promise.all([
+        apiRequest<OrderItem[]>(`/api/order-items/order/${selectedOrderId}`, { token }),
+        apiRequest<OrderStatusHistory[]>(`/api/order-status-history/order/${selectedOrderId}`, { token }).catch(() => []),
+      ])
+        .then(([nextItems, nextHistory]) => {
           if (isActive) {
             setOrderItems(nextItems);
+            setOrderStatusHistory(nextHistory);
           }
         })
         .catch(() => {
           if (isActive) {
             setOrderItems([]);
+            setOrderStatusHistory([]);
           }
         });
     }, 0);
@@ -180,6 +219,7 @@ export function AdminOperations() {
     });
     const nextOrders = await apiRequest<Order[]>("/api/orders", { token });
     setOrders(nextOrders);
+    setOrderStatusHistory(await apiRequest<OrderStatusHistory[]>(`/api/order-status-history/order/${selectedOrder.id}`, { token }).catch(() => []));
     setMessage("Estado de orden actualizado.");
   }
 
@@ -242,6 +282,26 @@ export function AdminOperations() {
     setMessage("Estado de envio actualizado.");
   }
 
+  async function createShipmentEvent(shipmentId: string, status: ShipmentStatus, description: string, location: string, eventDate: string) {
+    if (!selectedOrder) {
+      return;
+    }
+
+    await apiRequest<CreatedResponse>("/api/shipment-events", {
+      method: "POST",
+      body: {
+        shipmentId,
+        status,
+        description: description.trim(),
+        location: location.trim() || null,
+        eventDate: new Date(eventDate || Date.now()).toISOString(),
+      },
+      token,
+    });
+    await refreshOrderShipments(selectedOrder.id);
+    setMessage("Evento de envio registrado.");
+  }
+
   async function reviewPayment(result: PaymentReviewResult, observation: string) {
     if (!selectedPayment) {
       return;
@@ -275,6 +335,17 @@ export function AdminOperations() {
     setMessage("Usuario desbloqueado correctamente.");
   }
 
+  async function changeUserRole(userId: string, roleId: string) {
+    await apiRequest<void>(`/api/users/${userId}/role`, {
+      method: "PATCH",
+      body: { roleId },
+      token,
+    });
+    const nextUsers = await apiRequest<UserAccount[]>("/api/users", { token });
+    setUsers(nextUsers);
+    setMessage("Rol actualizado correctamente. La nueva sesión tomará el cambio al volver a iniciar sesión.");
+  }
+
   function openPaymentsTab(preferPending = false) {
     setActiveTab("payments");
     if (preferPending) {
@@ -303,11 +374,13 @@ export function AdminOperations() {
           orderItems={orderItems}
           orders={operationalOrders}
           selectedOrder={selectedOrder}
+          statusHistory={orderStatusHistory}
           shipments={selectedOrderShipments}
           usersById={usersById}
           onChangeStatus={changeOrderStatus}
           onChangeShipmentStatus={changeShipmentStatus}
           onRegisterTracking={registerOrderTracking}
+          onCreateShipmentEvent={createShipmentEvent}
           onSelectOrder={setSelectedOrderId}
         />
       ) : null}
@@ -320,13 +393,14 @@ export function AdminOperations() {
           reviews={reviews}
           selectedPayment={selectedPayment}
           usersById={usersById}
-          canReviewPayment={canManageUsersAndReviews}
+          canReviewPayment={canReviewSelectedPayment}
           onReview={reviewPayment}
           onSelectPayment={setSelectedPaymentId}
+          token={token}
         />
       ) : null}
 
-      {activeTab === "users" && canManageUsersAndReviews ? <UsersWorkspace currentUserId={user?.id ?? ""} users={users} onBlockUser={blockUser} onUnblockUser={unblockUser} /> : null}
+      {activeTab === "users" && canManageUsersAndReviews ? <UsersWorkspace currentUserId={user?.id ?? ""} roles={roles} users={users} onBlockUser={blockUser} onChangeRole={changeUserRole} onUnblockUser={unblockUser} /> : null}
       {activeTab === "audit" && canManageUsersAndReviews ? <AuditWorkspace auditLogs={visibleAuditLogs} productsById={productsById} usersById={usersById} /> : null}
     </div>
   );
@@ -367,23 +441,27 @@ function OrdersWorkspace({
   orders,
   orderItems,
   selectedOrder,
+  statusHistory,
   shipments,
   usersById,
   onSelectOrder,
   onChangeStatus,
   onChangeShipmentStatus,
   onRegisterTracking,
+  onCreateShipmentEvent,
 }: {
   couriers: Courier[];
   orders: Order[];
   orderItems: OrderItem[];
   selectedOrder: Order | null;
+  statusHistory: OrderStatusHistory[];
   shipments: Shipment[];
   usersById: Map<string, UserAccount>;
   onSelectOrder: (orderId: string) => void;
   onChangeStatus: (status: Order["status"], observation: string) => Promise<void>;
   onChangeShipmentStatus: (shipmentId: string, status: ShipmentStatus, observation: string) => Promise<void>;
   onRegisterTracking: (courierId: string, trackingCode: string, externalShipmentCode: string, estimatedDeliveryAt: string) => Promise<void>;
+  onCreateShipmentEvent: (shipmentId: string, status: ShipmentStatus, description: string, location: string, eventDate: string) => Promise<void>;
 }) {
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -426,7 +504,7 @@ function OrdersWorkspace({
         </div>
       </section>
 
-      <OrderDetail couriers={couriers} order={selectedOrder} items={orderItems} shipments={shipments} onChangeShipmentStatus={onChangeShipmentStatus} onChangeStatus={onChangeStatus} onRegisterTracking={onRegisterTracking} />
+      <OrderDetail couriers={couriers} order={selectedOrder} items={orderItems} statusHistory={statusHistory} shipments={shipments} onChangeShipmentStatus={onChangeShipmentStatus} onChangeStatus={onChangeStatus} onRegisterTracking={onRegisterTracking} onCreateShipmentEvent={onCreateShipmentEvent} />
     </div>
   );
 }
@@ -435,18 +513,22 @@ function OrderDetail({
   couriers,
   order,
   items,
+  statusHistory,
   shipments,
   onChangeStatus,
   onChangeShipmentStatus,
   onRegisterTracking,
+  onCreateShipmentEvent,
 }: {
   couriers: Courier[];
   order: Order | null;
   items: OrderItem[];
+  statusHistory: OrderStatusHistory[];
   shipments: Shipment[];
   onChangeShipmentStatus: (shipmentId: string, status: ShipmentStatus, observation: string) => Promise<void>;
   onChangeStatus: (status: Order["status"], observation: string) => Promise<void>;
   onRegisterTracking: (courierId: string, trackingCode: string, externalShipmentCode: string, estimatedDeliveryAt: string) => Promise<void>;
+  onCreateShipmentEvent: (shipmentId: string, status: ShipmentStatus, description: string, location: string, eventDate: string) => Promise<void>;
 }) {
   const [status, setStatus] = useState<Order["status"]>("paid");
   const [shipmentStatus, setShipmentStatus] = useState<ShipmentStatus>("pending");
@@ -459,6 +541,11 @@ function OrderDetail({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isTrackingSubmitting, setIsTrackingSubmitting] = useState(false);
   const [isShipmentStatusSubmitting, setIsShipmentStatusSubmitting] = useState(false);
+  const [isEventSubmitting, setIsEventSubmitting] = useState(false);
+  const [eventStatus, setEventStatus] = useState<ShipmentStatus>("inTransit");
+  const [eventDescription, setEventDescription] = useState("");
+  const [eventLocation, setEventLocation] = useState("");
+  const [eventDate, setEventDate] = useState(() => toDateTimeLocal(new Date()));
 
   useEffect(() => {
     if (order) {
@@ -476,6 +563,10 @@ function OrderDetail({
       setEstimatedDeliveryAt(shipment?.estimatedDeliveryAt ? shipment.estimatedDeliveryAt.slice(0, 10) : "");
       setShipmentStatus(shipment?.status ?? "pending");
       setShipmentObservation("");
+      setEventStatus(shipment?.status ?? "inTransit");
+      setEventDescription("");
+      setEventLocation("");
+      setEventDate(toDateTimeLocal(new Date()));
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
@@ -522,6 +613,27 @@ function OrderDetail({
     }
   }
 
+  async function handleEventSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const shipment = shipments[0];
+    if (!shipment || !eventDescription.trim()) {
+      return;
+    }
+
+    setIsEventSubmitting(true);
+    try {
+      await onCreateShipmentEvent(shipment.id, eventStatus, eventDescription, eventLocation, eventDate);
+      setEventDescription("");
+      setEventLocation("");
+    } finally {
+      setIsEventSubmitting(false);
+    }
+  }
+
+  const availableOrderStatuses = order ? [order.status, ...orderTransitions[order.status]] : orderStatuses;
+  const currentShipment = shipments[0];
+  const availableShipmentStatuses = currentShipment ? [currentShipment.status, ...shipmentTransitions[currentShipment.status]] : shipmentStatuses;
+
   return (
     <aside className="h-fit rounded-lg border border-zinc-200 bg-white p-5 shadow-sm xl:sticky xl:top-6">
       <PanelHeader eyebrow="Detalle" title={order ? `Orden #${shortId(order.id)}` : "Sin seleccion"} text="Productos, montos y avance del pedido." />
@@ -544,11 +656,26 @@ function OrderDetail({
             ))}
           </div>
 
+          {statusHistory.length > 0 ? (
+            <div className="mt-5 border-t border-zinc-200 pt-4">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">Historial del pedido</h3>
+              <div className="mt-3 space-y-3 border-l-2 border-rose-100 pl-4">
+                {statusHistory.map((entry) => (
+                  <div className="relative text-sm" key={entry.id}>
+                    <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full bg-rose-600 ring-4 ring-white" />
+                    <p className="font-semibold">{entry.previousStatus ? `${formatOrderStatus(entry.previousStatus)} -> ` : ""}{formatOrderStatus(entry.newStatus)}</p>
+                    <p className="mt-1 text-zinc-500">{formatDate(entry.changedAt)}{entry.observation ? ` - ${entry.observation}` : ""}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <form className="mt-5 space-y-3" onSubmit={handleSubmit}>
             <label className="block text-sm font-semibold">
               Estado del pedido
               <select className="admin-input mt-2" value={status} onChange={(event) => setStatus(event.target.value as Order["status"])}>
-                {orderStatuses.map((entry) => (
+                {availableOrderStatuses.map((entry) => (
                   <option key={entry} value={entry}>{formatOrderStatus(entry)}</option>
                 ))}
               </select>
@@ -557,7 +684,7 @@ function OrderDetail({
               Observacion
               <textarea className="admin-input mt-2 min-h-20" value={observation} onChange={(event) => setObservation(event.target.value)} />
             </label>
-            <button className="admin-primary-button w-full" disabled={isSubmitting}>Actualizar orden</button>
+            <button className="admin-primary-button w-full" disabled={isSubmitting || status === order.status}>Actualizar orden</button>
           </form>
 
           <form className="mt-5 space-y-3 rounded-lg border border-rose-100 bg-rose-50/40 p-4" onSubmit={handleTrackingSubmit}>
@@ -595,7 +722,8 @@ function OrderDetail({
           </form>
 
           {shipments.length > 0 ? (
-            <form className="mt-4 space-y-3 rounded-lg border border-zinc-200 bg-white p-4" onSubmit={handleShipmentStatusSubmit}>
+            <>
+              <form className="mt-4 space-y-3 rounded-lg border border-zinc-200 bg-white p-4" onSubmit={handleShipmentStatusSubmit}>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Avance del envio</p>
                 <h3 className="mt-1 text-lg font-semibold">Actualizar estado</h3>
@@ -603,7 +731,7 @@ function OrderDetail({
               <label className="block text-sm font-semibold">
                 Estado del envio
                 <select className="admin-input mt-2" value={shipmentStatus} onChange={(event) => setShipmentStatus(event.target.value as ShipmentStatus)}>
-                  {shipmentStatuses.map((entry) => (
+                  {availableShipmentStatuses.map((entry) => (
                     <option key={entry} value={entry}>{formatShipmentStatus(entry)}</option>
                   ))}
                 </select>
@@ -612,10 +740,36 @@ function OrderDetail({
                 Observacion para seguimiento
                 <textarea className="admin-input mt-2 min-h-20" value={shipmentObservation} onChange={(event) => setShipmentObservation(event.target.value)} placeholder="Ej. Pedido entregado a Olva Courier." />
               </label>
-              <button className="admin-primary-button w-full" disabled={isShipmentStatusSubmitting}>
+              <button className="admin-primary-button w-full" disabled={isShipmentStatusSubmitting || shipmentStatus === shipments[0]?.status}>
                 {isShipmentStatusSubmitting ? "Actualizando..." : "Actualizar envio"}
               </button>
-            </form>
+              </form>
+              <form className="mt-4 space-y-3 rounded-lg border border-zinc-200 bg-stone-50 p-4" onSubmit={handleEventSubmit}>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Bitacora del courier</p>
+                <h3 className="mt-1 text-lg font-semibold">Registrar evento</h3>
+              </div>
+              <label className="block text-sm font-semibold">
+                Estado
+                <select className="admin-input mt-2" value={eventStatus} onChange={(event) => setEventStatus(event.target.value as ShipmentStatus)}>
+                  {shipmentStatuses.map((entry) => <option key={entry} value={entry}>{formatShipmentStatus(entry)}</option>)}
+                </select>
+              </label>
+              <label className="block text-sm font-semibold">
+                Descripcion
+                <input className="admin-input mt-2" required value={eventDescription} onChange={(event) => setEventDescription(event.target.value)} placeholder="Ej. El paquete llego a la agencia." />
+              </label>
+              <label className="block text-sm font-semibold">
+                Ubicacion
+                <input className="admin-input mt-2" value={eventLocation} onChange={(event) => setEventLocation(event.target.value)} placeholder="Ej. Lima" />
+              </label>
+              <label className="block text-sm font-semibold">
+                Fecha del evento
+                <input className="admin-input mt-2" required type="datetime-local" value={eventDate} onChange={(event) => setEventDate(event.target.value)} />
+              </label>
+              <button className="admin-secondary-button w-full" disabled={isEventSubmitting}>{isEventSubmitting ? "Registrando..." : "Registrar evento"}</button>
+              </form>
+            </>
           ) : null}
         </>
       ) : <p className="text-sm text-zinc-500">No hay ordenes registradas.</p>}
@@ -633,6 +787,7 @@ function PaymentsWorkspace({
   canReviewPayment,
   onSelectPayment,
   onReview,
+  token,
 }: {
   payments: Payment[];
   selectedPayment: Payment | null;
@@ -643,6 +798,7 @@ function PaymentsWorkspace({
   canReviewPayment: boolean;
   onSelectPayment: (paymentId: string) => void;
   onReview: (result: PaymentReviewResult, observation: string) => Promise<void>;
+  token: string | null;
 }) {
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -681,7 +837,7 @@ function PaymentsWorkspace({
         </div>
       </section>
 
-      <PaymentDetail canReviewPayment={canReviewPayment} payment={selectedPayment} receipts={receipts} reviews={reviews} onReview={onReview} />
+      <PaymentDetail canReviewPayment={canReviewPayment} payment={selectedPayment} receipts={receipts} reviews={reviews} token={token} onReview={onReview} />
     </div>
   );
 }
@@ -691,12 +847,14 @@ function PaymentDetail({
   payment,
   receipts,
   reviews,
+  token,
   onReview,
 }: {
   canReviewPayment: boolean;
   payment: Payment | null;
   receipts: PaymentReceipt[];
   reviews: PaymentReview[];
+  token: string | null;
   onReview: (result: PaymentReviewResult, observation: string) => Promise<void>;
 }) {
   const [observation, setObservation] = useState("");
@@ -736,10 +894,15 @@ function PaymentDetail({
             <div className="mt-3 space-y-3">
               {receipts.length === 0 ? <p className="rounded-lg border border-dashed border-zinc-300 p-3 text-sm text-zinc-500">Sin comprobantes cargados.</p> : null}
               {receipts.map((receipt) => (
-                <a className="block rounded-lg border border-zinc-200 bg-stone-50 p-3 text-sm hover:border-zinc-950" href={publicAssetUrl(receipt.fileUrl)} key={receipt.id} target="_blank">
-                  <span className="font-semibold">Operacion {receipt.operationCode ?? "sin codigo"}</span>
-                  <span className="mt-1 block text-zinc-500">{receipt.declaredAmount ? formatMoney(receipt.declaredAmount, receipt.currency ?? payment.currency) : "Monto no declarado"}</span>
-                </a>
+                <div key={receipt.id}>
+                  <PrivateFileLink
+                    className="block rounded-lg border border-zinc-200 bg-stone-50 p-3 text-sm hover:border-zinc-950"
+                    label={`Operacion ${receipt.operationCode ?? "sin codigo"}`}
+                    path={`/api/payment-receipts/${receipt.id}/file`}
+                    token={token}
+                  />
+                  <p className="-mt-2 px-3 text-xs text-zinc-500">{receipt.declaredAmount ? formatMoney(receipt.declaredAmount, receipt.currency ?? payment.currency) : "Monto no declarado"}</p>
+                </div>
               ))}
             </div>
           </div>
@@ -780,13 +943,17 @@ function PaymentDetail({
 
 function UsersWorkspace({
   users,
+  roles,
   currentUserId,
   onBlockUser,
+  onChangeRole,
   onUnblockUser,
 }: {
   users: UserAccount[];
+  roles: Role[];
   currentUserId: string;
   onBlockUser: (userId: string) => Promise<void>;
+  onChangeRole: (userId: string, roleId: string) => Promise<void>;
   onUnblockUser: (userId: string) => Promise<void>;
 }) {
   const [busyUserId, setBusyUserId] = useState("");
@@ -809,14 +976,24 @@ function UsersWorkspace({
     }
   }
 
+  async function handleRoleChange(userId: string, roleId: string) {
+    setBusyUserId(userId);
+    try {
+      await onChangeRole(userId, roleId);
+    } finally {
+      setBusyUserId("");
+    }
+  }
+
   return (
     <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-      <PanelHeader eyebrow="Clientes y equipo" title="Usuarios registrados" text="Consulta cuentas, telefonos, estado y administra bloqueos." />
+      <PanelHeader eyebrow="Clientes y equipo" title="Usuarios registrados" text="Consulta cuentas, cambia roles y administra bloqueos." />
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[880px] text-left text-sm">
+        <table className="w-full min-w-[1040px] text-left text-sm">
           <thead className="border-y border-zinc-200 bg-stone-50 text-xs uppercase tracking-[0.12em] text-zinc-500">
             <tr>
               <th className="px-5 py-3">Usuario</th>
+              <th className="px-5 py-3">Rol</th>
               <th className="px-5 py-3">Telefono</th>
               <th className="px-5 py-3">Estado</th>
               <th className="px-5 py-3">Alta</th>
@@ -833,6 +1010,19 @@ function UsersWorkspace({
                 <td className="px-5 py-4">
                   <p className="font-semibold">{entry.name} {entry.paternalSurname} {entry.maternalSurname ?? ""}</p>
                   <p className="text-zinc-500">{entry.email}{isCurrentUser ? " - sesion actual" : ""}</p>
+                </td>
+                <td className="px-5 py-4">
+                  <select
+                    aria-label={`Rol de ${entry.email}`}
+                    className="admin-input min-w-40 py-2 text-xs"
+                    disabled={isCurrentUser || isBusy}
+                    value={entry.roleId}
+                    onChange={(event) => {
+                      void handleRoleChange(entry.id, event.target.value);
+                    }}
+                  >
+                    {roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                  </select>
                 </td>
                 <td className="px-5 py-4">{entry.phone}</td>
                 <td className="px-5 py-4"><StatusBadge label={formatUserStatus(entry.status)} /></td>
@@ -1532,6 +1722,11 @@ function formatShipmentStatus(status: ShipmentStatus) {
     observed: "Con observacion",
   };
   return labels[status];
+}
+
+function toDateTimeLocal(value: Date) {
+  const offset = value.getTimezoneOffset();
+  return new Date(value.getTime() - offset * 60_000).toISOString().slice(0, 16);
 }
 
 function formatUserStatus(status: UserAccount["status"]) {

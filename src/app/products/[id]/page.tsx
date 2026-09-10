@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { BrandLogo } from "@/components/BrandLogo";
 import { apiRequest, publicAssetUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { addGuestCartItem, toGuestCartItem } from "@/lib/cart";
@@ -127,6 +128,7 @@ export default function ProductDetailPage() {
   const subtotal = unitPrice * quantity;
   const whatsappHref = product
     ? buildWhatsappHref({
+        phone: process.env.NEXT_PUBLIC_WHATSAPP_PHONE ?? "51941872197",
         productName: product.name,
         quantity,
         size: selectedVariant?.size ?? "Talla unica",
@@ -186,8 +188,8 @@ export default function ProductDetailPage() {
             <Link href="/">Inicio</Link>
             <Link href="/catalog">Catalogo</Link>
           </nav>
-          <Link href="/" className="font-serif text-3xl font-semibold">
-            Sweet Silvia
+          <Link aria-label="Ir al inicio de Sweet Silvia" href="/">
+            <BrandLogo className="w-40 sm:w-44" priority />
           </Link>
           <div className="flex items-center gap-4 text-sm font-semibold uppercase tracking-[0.12em]">
             {user ? (
@@ -220,16 +222,25 @@ export default function ProductDetailPage() {
                   onClick={() => setSelectedImageIndex(index)}
                   type="button"
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img alt={image.label} className="h-full w-full object-cover" src={image.src} />
+                  <ProductImageWithFallback
+                    alt={image.label}
+                    className="h-full w-full object-cover"
+                    fallbackSrc={getMockGalleryImages(product.name)[index % 3] ?? fallbackImage ?? undefined}
+                    src={image.src}
+                  />
                 </button>
               ))}
             </div>
 
             <div className="relative order-1 overflow-hidden rounded-lg bg-[#e7dfd4] lg:order-2">
               {imageSrc ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img alt={activeImageLabel} className="aspect-[4/5] min-h-[560px] w-full object-cover" src={imageSrc} />
+                <ProductImageWithFallback
+                  alt={activeImageLabel}
+                  className="aspect-[4/5] min-h-[560px] w-full object-cover"
+                  fallbackSrc={getMockGalleryImages(product.name)[selectedImageIndex % 3] ?? fallbackImage ?? undefined}
+                  key={imageSrc}
+                  src={imageSrc}
+                />
               ) : (
                 <div className="grid aspect-[4/5] min-h-[560px] place-items-center font-serif text-4xl text-zinc-400">Sweet Silvia</div>
               )}
@@ -378,6 +389,7 @@ function sortGalleryImages(firstImage: ProductImage, secondImage: ProductImage) 
 }
 
 function buildWhatsappHref({
+  phone,
   productName,
   quantity,
   size,
@@ -385,6 +397,7 @@ function buildWhatsappHref({
   unitPrice,
   currency,
 }: {
+  phone: string;
   productName: string;
   quantity: number;
   size: string;
@@ -401,7 +414,7 @@ function buildWhatsappHref({
     `Precio unitario: S/. ${unitPrice.toFixed(2)} ${currency}`,
   ].join("\n");
 
-  return `https://wa.me/51941872197?text=${encodeURIComponent(message)}`;
+  return `https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(message)}`;
 }
 
 function AccountIcon() {
@@ -461,4 +474,33 @@ function getMockGalleryImages(productName: string) {
   }
 
   return [mainImage, "/mock-products/blusa-satin-marfil.jpg", "/mock-products/top-basico-crema.jpg"];
+}
+
+function ProductImageWithFallback({
+  src,
+  fallbackSrc,
+  alt,
+  className,
+}: {
+  src: string;
+  fallbackSrc?: string;
+  alt: string;
+  className: string;
+}) {
+  const [fallbackState, setFallbackState] = useState<{ source: string; useFallback: boolean }>({ source: src, useFallback: false });
+  const displaySrc = fallbackState.source === src && fallbackState.useFallback && fallbackSrc ? fallbackSrc : src;
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      alt={alt}
+      className={className}
+      onError={() => {
+        if (fallbackSrc && fallbackState.source === src && !fallbackState.useFallback) {
+          setFallbackState({ source: src, useFallback: true });
+        }
+      }}
+      src={displaySrc}
+    />
+  );
 }

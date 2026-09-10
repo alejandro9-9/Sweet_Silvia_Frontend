@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { BrandLogo } from "@/components/BrandLogo";
 import { apiRequest, publicAssetUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { CartNavLink } from "@/components/CartNavLink";
@@ -218,6 +219,8 @@ const mockProducts: Product[] = [
 ];
 
 const useMockCatalog = process.env.NEXT_PUBLIC_ENABLE_MOCKS === "true";
+const introVideoStorageKey = "sweet-silvia-intro-video-v3";
+type IntroVideoState = "checking" | "open" | "closed";
 
 export function Storefront({ compact = false }: StorefrontProps) {
   const { user } = useAuth();
@@ -234,6 +237,25 @@ export function Storefront({ compact = false }: StorefrontProps) {
   const [selectedVariants, setSelectedVariants] = useState<ProductVariant[]>([]);
   const [isLoadingVariants, setIsLoadingVariants] = useState(false);
   const [cartNotice, setCartNotice] = useState("");
+  const [introVideoState, setIntroVideoState] = useState<IntroVideoState>(compact ? "closed" : "checking");
+
+  useEffect(() => {
+    if (compact) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      let hasSeenIntro = false;
+      try {
+        hasSeenIntro = window.localStorage.getItem(introVideoStorageKey) === "true";
+      } catch {
+        hasSeenIntro = false;
+      }
+      setIntroVideoState(hasSeenIntro ? "closed" : "open");
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [compact]);
 
   useEffect(() => {
     Promise.all([
@@ -329,8 +351,53 @@ export function Storefront({ compact = false }: StorefrontProps) {
     openProduct(product);
   }
 
+  function finishIntro() {
+    try {
+      window.localStorage.setItem(introVideoStorageKey, "true");
+    } catch {
+      // La bienvenida igual puede cerrarse si el navegador bloquea el almacenamiento.
+    }
+    setIntroVideoState("closed");
+  }
+
+  function skipIntro() {
+    setIntroVideoState("closed");
+    router.push("/");
+  }
+
   return (
     <div className="min-h-screen bg-[#f8f5f0] text-zinc-950">
+      {!compact && introVideoState === "checking" ? <div aria-hidden="true" className="fixed inset-0 z-50 bg-zinc-950" /> : null}
+      {!compact && introVideoState === "open" ? (
+        <section aria-label="Presentacion de Sweet Silvia" className="fixed inset-0 z-50 overflow-hidden bg-zinc-950 text-white">
+          <video
+            autoPlay
+            className="absolute inset-0 h-full w-full object-contain"
+            muted
+            onEnded={() => finishIntro()}
+            playsInline
+            poster="/sweet-silvia-preview-poster.jpg"
+            preload="auto"
+          >
+            <source src="/sweet-silvia-preview.mp4" type="video/mp4" />
+          </video>
+          <div aria-hidden="true" className="absolute inset-0 bg-black/35" />
+          <div className="relative flex min-h-full items-end justify-center px-5 pb-10 text-center sm:pb-14">
+            <div className="max-w-md">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-rose-200">Sweet Silvia</p>
+              <h1 className="mt-3 font-serif text-4xl font-semibold leading-tight sm:text-6xl">Vuelve a ti.</h1>
+              <p className="mt-4 text-sm leading-6 text-white/85 sm:text-base">Descubre la nueva selección de Sweet Silvia.</p>
+              <button
+                className="mt-7 inline-flex min-h-12 items-center justify-center rounded-lg bg-white px-7 py-4 text-sm font-semibold uppercase tracking-[0.14em] text-zinc-950 transition hover:bg-rose-100"
+                onClick={skipIntro}
+                type="button"
+              >
+                Ir a la tienda
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
       <div className="bg-zinc-950 px-4 py-2 text-center text-xs font-semibold uppercase tracking-[0.18em] text-white">
         Envio express disponible en Lima
       </div>
@@ -342,8 +409,8 @@ export function Storefront({ compact = false }: StorefrontProps) {
             <Link href="/catalog">Catalogo</Link>
           </nav>
 
-          <Link href="/" className="font-serif text-3xl font-semibold tracking-normal">
-            Sweet Silvia
+          <Link aria-label="Ir al inicio de Sweet Silvia" href="/">
+            <BrandLogo className="w-40 sm:w-44" priority />
           </Link>
 
           <div className="flex items-center gap-4 text-sm font-semibold uppercase tracking-[0.12em]">
@@ -369,23 +436,21 @@ export function Storefront({ compact = false }: StorefrontProps) {
         </div>
       </header>
 
-      {!compact ? (
-        <section className="mx-auto grid max-w-7xl gap-8 px-4 py-8 sm:px-6 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
-          <div className="min-h-[520px] bg-[url('https://images.unsplash.com/photo-1496747611176-843222e1e57c?auto=format&fit=crop&w=1300&q=80')] bg-cover bg-center" />
-          <div className="py-8">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-rose-800">Nueva seleccion</p>
-            <h1 className="mt-4 font-serif text-5xl font-semibold leading-tight tracking-normal sm:text-7xl">
-              Prendas elegidas para volver a ti.
-            </h1>
-            <p className="mt-5 max-w-lg text-base leading-7 text-zinc-600">
-              Descubre vestidos, sets, blusas y piezas suaves para todos los dias. Compra como visitante y accede a tu cuenta solo cuando lo necesites.
-            </p>
-            <a className="mt-8 inline-flex rounded-lg bg-zinc-950 px-8 py-4 text-sm font-semibold uppercase tracking-[0.14em] text-white" href="#productos">
-              Comprar ahora
-            </a>
-          </div>
-        </section>
-      ) : null}
+      <section className="mx-auto grid max-w-7xl gap-8 px-4 py-8 sm:px-6 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
+        <div className="min-h-[520px] bg-[url('/mock-products/vestido-floral-rosa.jpg')] bg-cover bg-center" />
+        <div className="py-8">
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-rose-800">Nueva seleccion</p>
+          <h1 className="mt-4 font-serif text-5xl font-semibold leading-tight tracking-normal sm:text-7xl">
+            Prendas elegidas para volver a ti.
+          </h1>
+          <p className="mt-5 max-w-lg text-base leading-7 text-zinc-600">
+            Descubre vestidos, sets, blusas y piezas suaves para todos los dias. Compra como visitante y accede a tu cuenta solo cuando lo necesites.
+          </p>
+          <Link className="mt-8 inline-flex rounded-lg bg-zinc-950 px-8 py-4 text-sm font-semibold uppercase tracking-[0.14em] text-white" href="#productos">
+            Comprar ahora
+          </Link>
+        </div>
+      </section>
 
       <section id="colecciones" className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-4">

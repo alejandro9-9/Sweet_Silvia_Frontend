@@ -161,35 +161,19 @@ export function ProductImageUploadForm() {
   async function moveImage(image: ProductImage, direction: "up" | "down") {
     const currentIndex = images.findIndex((item) => item.id === image.id);
     const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-    const targetImage = images[targetIndex];
-    const draft = imageDrafts[image.id];
-    const targetDraft = targetImage ? imageDrafts[targetImage.id] : null;
-
-    if (!targetImage || !draft || !targetDraft) {
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= images.length) {
       return;
     }
 
+    const reordered = [...images];
+    [reordered[currentIndex], reordered[targetIndex]] = [reordered[targetIndex], reordered[currentIndex]];
+
     setSavingImageId(image.id);
     try {
-      await apiRequest<void>(`/api/product-images/${image.id}`, {
+      await apiRequest<void>(`/api/product-images/product/${productId}/order`, {
         method: "PUT",
         body: {
-          productVariantId: draft.productVariantId || null,
-          url: image.url,
-          altText: draft.altText || null,
-          order: targetDraft.order,
-          isMain: draft.isMain,
-        },
-        token,
-      });
-      await apiRequest<void>(`/api/product-images/${targetImage.id}`, {
-        method: "PUT",
-        body: {
-          productVariantId: targetDraft.productVariantId || null,
-          url: targetImage.url,
-          altText: targetDraft.altText || null,
-          order: draft.order,
-          isMain: targetDraft.isMain,
+          imageIds: reordered.map((entry) => entry.id),
         },
         token,
       });

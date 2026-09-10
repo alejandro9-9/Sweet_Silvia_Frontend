@@ -14,7 +14,9 @@ export type GuestCartItem = {
   imageUrl: string | null;
 };
 
-const guestCartKey = "sweet-silvia-guest-cart-v1";
+// v2 removes the old heuristic that divided prices >= 1000 by 100.
+// Prices are stored as decimal PEN values throughout the API and cart.
+const guestCartKey = "sweet-silvia-guest-cart-v2";
 
 export function readGuestCart() {
   if (typeof window === "undefined") {
@@ -142,9 +144,5 @@ function isGuestCartItem(item: GuestCartItem | null): item is GuestCartItem {
 }
 
 function normalizeUnitPrice(value: number) {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-
-  return value >= 1000 ? value / 100 : value;
+  return Number.isFinite(value) ? value : 0;
 }

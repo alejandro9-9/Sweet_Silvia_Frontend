@@ -1,14 +1,16 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
+import { Link } from "@/components/RouterLink";
 import { useEffect, useMemo, useState } from "react";
 import { BrandLogo } from "@/components/BrandLogo";
 import { apiRequest, publicAssetUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { CartNavLink } from "@/components/CartNavLink";
+import { SiteFooter } from "@/components/SiteFooter";
 import { WhatsappFloatingButton } from "@/components/WhatsappFloatingButton";
 import { canManageCatalog } from "@/lib/roles";
+import { clientEnv } from "@/lib/env";
 import type { Category, Collection, Product, ProductImage, ProductVariant } from "@/lib/types";
 
 type StorefrontProps = {
@@ -218,13 +220,13 @@ const mockProducts: Product[] = [
   },
 ];
 
-const useMockCatalog = process.env.NEXT_PUBLIC_ENABLE_MOCKS === "true";
+const useMockCatalog = clientEnv.enableMocks;
 const introVideoStorageKey = "sweet-silvia-intro-video-v3";
 type IntroVideoState = "checking" | "open" | "closed";
 
 export function Storefront({ compact = false }: StorefrontProps) {
   const { user } = useAuth();
-  const router = useRouter();
+  const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -279,35 +281,45 @@ export function Storefront({ compact = false }: StorefrontProps) {
     }
 
     let isActive = true;
+    setIsLoadingProducts(true);
+    setMessage("");
 
-    apiRequest<Product[]>(`/api/products?${params.toString()}`)
-      .then((nextProducts) => {
+    async function loadProducts() {
+      try {
+        const nextProducts = await apiRequest<Product[]>(`/api/products?${params.toString()}`);
         if (!isActive) {
-          return [];
+          return;
         }
+
         setProducts(nextProducts);
-        return Promise.all(
-          nextProducts.map((product) =>
-            apiRequest<ProductImage[]>(`/api/product-images/product/${product.id}`).then((images) => [product.id, images] as const),
-          ),
+        const entries = await Promise.all(
+          nextProducts.map(async (product) => {
+            try {
+              const images = await apiRequest<ProductImage[]>(`/api/product-images/product/${product.id}`);
+              return [product.id, images] as const;
+            } catch {
+              return [product.id, []] as const;
+            }
+          }),
         );
-      })
-      .then((entries) => {
+
         if (isActive) {
           setImagesByProduct(Object.fromEntries(entries));
-          setMessage("");
         }
-      })
-      .catch(() => {
+      } catch {
         if (isActive) {
+          setProducts([]);
+          setImagesByProduct({});
           setMessage("No pudimos cargar los productos. Intenta nuevamente en unos minutos.");
         }
-      })
-      .finally(() => {
+      } finally {
         if (isActive) {
           setIsLoadingProducts(false);
         }
-      });
+      }
+    }
+
+    void loadProducts();
 
     return () => {
       isActive = false;
@@ -315,16 +327,30 @@ export function Storefront({ compact = false }: StorefrontProps) {
   }, [categoryId, collectionId]);
 
   const categoryNames = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
+  const selectedCollection = useMemo(
+    () => collections.find((collection) => collection.id === collectionId) ?? null,
+    [collectionId, collections],
+  );
+  const selectedCategory = useMemo(
+    () => categories.find((category) => category.id === categoryId) ?? null,
+    [categories, categoryId],
+  );
+  const catalogTitle = selectedCategory
+    ? `${selectedCollection?.name ?? "Todo"} / ${selectedCategory.name}`
+    : selectedCollection?.name ?? "New arrivals";
+  const catalogDescription = selectedCategory?.description ?? selectedCollection?.description ?? "Piezas disponibles para explorar sin iniciar sesion.";
   const visibleProducts = useMemo(() => {
     const backendIds = new Set(products.map((product) => product.id));
     const availableMocks = useMockCatalog ? mockProducts.filter((product) => !backendIds.has(product.id)) : [];
     const allProducts = [...products, ...availableMocks];
 
-    return allProducts.filter((product) => {
-      const matchesCategory = categoryId ? product.categoryId === categoryId : true;
-      const matchesCollection = collectionId ? product.collectionId === collectionId : true;
-      return matchesCategory && matchesCollection;
-    });
+    return allProducts
+      .filter((product) => {
+        const matchesCategory = categoryId ? product.categoryId === categoryId : true;
+        const matchesCollection = collectionId ? product.collectionId === collectionId : true;
+        return matchesCategory && matchesCollection;
+      })
+      .sort(sortProductsByDisplayOrder);
   }, [categoryId, collectionId, products]);
 
   const selectedImages = selectedProduct ? imagesByProduct[selectedProduct.id] ?? [] : [];
@@ -334,7 +360,7 @@ export function Storefront({ compact = false }: StorefrontProps) {
     setSelectedVariants([]);
     setIsLoadingVariants(false);
     setCartNotice("");
-    router.push(`/products/${product.id}`);
+    navigate(`/products/${product.id}`);
   }
 
   function handleAddToCart() {
@@ -362,7 +388,7 @@ export function Storefront({ compact = false }: StorefrontProps) {
 
   function skipIntro() {
     setIntroVideoState("closed");
-    router.push("/");
+    navigate("/");
   }
 
   return (
@@ -483,20 +509,33 @@ export function Storefront({ compact = false }: StorefrontProps) {
       </section>
 
       <section id="productos" className="mx-auto max-w-7xl px-4 pb-16 sm:px-6">
-        <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h2 className="font-serif text-4xl font-semibold tracking-normal">New arrivals</h2>
-            <p className="mt-2 text-sm text-zinc-600">Piezas disponibles para explorar sin iniciar sesion.</p>
+        <div className="mb-7 flex flex-col gap-5 border-t border-zinc-200 pt-6 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-800">Seleccion actual</p>
+            <h2 className="mt-1 font-serif text-2xl font-semibold leading-tight tracking-normal sm:text-3xl">{catalogTitle}</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-600">
+              {catalogDescription}
+            </p>
           </div>
 
-          <select className="h-11 rounded-lg border border-zinc-300 bg-white px-3 text-sm" value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
-            <option value="">Todas las categorias</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </select>
+          <div className="flex shrink-0 flex-col gap-2 md:items-end">
+            <label className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500" htmlFor="catalog-category-filter">
+              Categoria
+            </label>
+            <select
+              className="h-10 min-w-48 rounded-lg border border-zinc-300 bg-white px-3 text-sm shadow-sm outline-none transition focus:border-zinc-950"
+              id="catalog-category-filter"
+              value={categoryId}
+              onChange={(event) => setCategoryId(event.target.value)}
+            >
+              <option value="">Todas las categorias</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {message ? <p className="mb-4 border border-zinc-200 bg-white p-3 text-sm text-zinc-700">{message}</p> : null}
@@ -538,6 +577,7 @@ export function Storefront({ compact = false }: StorefrontProps) {
           variants={selectedVariants}
         />
       ) : null}
+      <SiteFooter />
       <WhatsappFloatingButton />
     </div>
   );
@@ -562,7 +602,6 @@ function ProductCard({
     <article className="group cursor-pointer" onClick={onOpen}>
       <div className="relative aspect-[3/4] overflow-hidden bg-[#eee8df]">
         {imageSrc ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             alt={product.name}
             className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
@@ -624,7 +663,6 @@ function ProductQuickView({
       >
         <div className="min-h-[360px] bg-[#eee8df] md:min-h-[620px]">
           {imageSrc ? (
-            // eslint-disable-next-line @next/next/no-img-element
             <img alt={product.name} className="h-full w-full object-cover" onError={handleImageError} src={imageSrc} />
           ) : (
             <div className="grid h-full place-items-center font-serif text-3xl text-zinc-400">Sweet Silvia</div>
@@ -689,6 +727,13 @@ function useProductImageSource(product: Product, images: ProductImage[]) {
     imageSrc,
     handleImageError: () => setHasImageError(true),
   };
+}
+
+function sortProductsByDisplayOrder(firstProduct: Product, secondProduct: Product) {
+  const firstOrder = firstProduct.displayOrder ?? Number.MAX_SAFE_INTEGER;
+  const secondOrder = secondProduct.displayOrder ?? Number.MAX_SAFE_INTEGER;
+
+  return firstOrder - secondOrder || firstProduct.name.localeCompare(secondProduct.name);
 }
 
 function getMockProductImage(productName: string) {

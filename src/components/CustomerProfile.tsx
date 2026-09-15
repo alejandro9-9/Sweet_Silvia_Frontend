@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link } from "@/components/RouterLink";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { PaymentReceiptUploadForm } from "@/components/UploadForms";
 import { PrivateFileLink } from "@/components/PrivateFileLink";
@@ -20,8 +20,8 @@ const profileSections: { id: ProfileSection; label: string }[] = [
 
 export function CustomerProfile() {
   const { token, user, refresh } = useAuth();
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const requestedSection = searchParams.get("section") as ProfileSection | null;
   const [activeSection, setActiveSection] = useState<ProfileSection>(isProfileSection(requestedSection) ? requestedSection : "orders");
   const currentSection = isProfileSection(requestedSection) ? requestedSection : activeSection;
@@ -132,7 +132,7 @@ export function CustomerProfile() {
   function handleSectionSelect(section: ProfileSection) {
     setActiveSection(section);
     if (requestedSection) {
-      router.replace("/profile", { scroll: false });
+      navigate("/profile", { replace: true });
     }
   }
 

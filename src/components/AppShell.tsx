@@ -1,9 +1,10 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { useLocation, useNavigate } from "react-router-dom";
+import { Link } from "@/components/RouterLink";
 import { useEffect, useState } from "react";
 import { BrandLogo } from "@/components/BrandLogo";
+import { SiteFooter } from "@/components/SiteFooter";
 import { useAuth } from "@/lib/auth";
 import { canAdminister, canManageCatalog, canUploadPaymentReceipts } from "@/lib/roles";
 import type { ApiRole } from "@/lib/types";
@@ -23,8 +24,8 @@ const customerLinks = [
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-  const router = useRouter();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
   const { user, logout } = useAuth();
   const isAdminArea = pathname.startsWith("/admin") || (pathname === "/dashboard" && Boolean(user && canManageCatalog(user.role)));
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
@@ -36,11 +37,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   async function handleLogout() {
     await logout();
     setIsAccountMenuOpen(false);
-    router.push("/login");
+    navigate("/login");
   }
 
   return (
-    <div className={isAdminArea ? "admin-shell min-h-screen text-zinc-950" : "min-h-screen bg-stone-50 text-zinc-950"}>
+    <div className={isAdminArea ? "admin-shell flex min-h-screen flex-col text-zinc-950" : "flex min-h-screen flex-col bg-stone-50 text-zinc-950"}>
       <header className={isAdminArea ? "admin-header border-b border-rose-100" : "border-b border-zinc-200 bg-white"}>
         <div className="mx-auto flex min-h-16 max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <Link aria-label="Ir al inicio de Sweet Silvia" href={homeHref}>
@@ -119,7 +120,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6">{children}</main>
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">{children}</main>
+      {!isAdminArea ? <SiteFooter /> : null}
     </div>
   );
 }
@@ -139,15 +141,15 @@ export function RoleGate({
   children: React.ReactNode;
   allowedRoles: ApiRole[];
 }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const { user, isReady } = useAuth();
   const isAllowed = Boolean(user && allowedRoles.includes(user.role));
 
   useEffect(() => {
     if (isReady && !user) {
-      router.replace("/login");
+      navigate("/login", { replace: true });
     }
-  }, [isReady, router, user]);
+  }, [isReady, navigate, user]);
 
   if (!isReady) {
     return <ScreenMessage title="Un momento" text="Estamos abriendo tu cuenta." />;

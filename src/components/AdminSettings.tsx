@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { canAdminister } from "@/lib/roles";
@@ -39,10 +40,31 @@ const tabs: Array<{ id: SettingsTab; label: string; adminOnly?: boolean }> = [
 export function AdminSettings() {
   const { token, user } = useAuth();
   const isAdmin = canAdminister(user?.role);
-  const [activeTab, setActiveTab] = useState<SettingsTab>("coupons");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
+  const requestedTab = searchParams.get("tab") as SettingsTab | null;
+  const requestedTabIsVisible = Boolean(requestedTab && visibleTabs.some((tab) => tab.id === requestedTab));
+  const initialTab: SettingsTab = requestedTabIsVisible ? (requestedTab as SettingsTab) : "coupons";
+  const initialVariantId = searchParams.get("variantId") ?? "";
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [message, setMessage] = useState("");
 
-  const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
+  useEffect(() => {
+    setActiveTab(requestedTabIsVisible ? (requestedTab as SettingsTab) : "coupons");
+  }, [requestedTab, requestedTabIsVisible]);
+
+  function selectTab(tab: SettingsTab) {
+    setActiveTab(tab);
+    setMessage("");
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("tab", tab);
+      if (tab !== "stock") {
+        next.delete("variantId");
+      }
+      return next;
+    }, { replace: true });
+  }
 
   return (
     <div className="space-y-6">
@@ -58,7 +80,7 @@ export function AdminSettings() {
               aria-selected={activeTab === tab.id}
               className={activeTab === tab.id ? "rounded-lg bg-zinc-950 px-4 py-2 text-sm font-semibold text-white" : "rounded-lg border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 hover:border-zinc-950"}
               key={tab.id}
-              onClick={() => { setActiveTab(tab.id); setMessage(""); }}
+              onClick={() => selectTab(tab.id)}
               role="tab"
               type="button"
             >
@@ -74,7 +96,7 @@ export function AdminSettings() {
       {activeTab === "payments" ? <PaymentsPanel onMessage={setMessage} token={token} /> : null}
       {activeTab === "shipping" ? <ShippingPanel isAdmin={isAdmin} onMessage={setMessage} token={token} /> : null}
       {activeTab === "ubigeo" ? <UbigeoPanel onMessage={setMessage} token={token} /> : null}
-      {activeTab === "stock" ? <StockPanel onMessage={setMessage} token={token} /> : null}
+      {activeTab === "stock" ? <StockPanel initialVariantId={initialVariantId} onMessage={setMessage} token={token} /> : null}
       {activeTab === "security" ? <SecurityPanel onMessage={setMessage} token={token} /> : null}
       {activeTab === "olva" ? <OlvaPanel onMessage={setMessage} token={token} /> : null}
     </div>
@@ -102,6 +124,16 @@ function CouponsPanel({ isAdmin, onMessage, token }: PanelProps & { isAdmin: boo
   });
   const [restrictionForm, setRestrictionForm] = useState({ categoryId: "", productId: "", productVariantId: "", collectionId: "" });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const hasItemQuantityLimit = form.scope === "item" && Number(form.maximumDiscountedItemsQuantity) > 0;
+
+  function changeScope(scope: string) {
+    setForm((current) => ({
+      ...current,
+      scope,
+      maximumDiscountedItemsQuantity: "",
+      applicationStrategy: scope === "item" ? current.applicationStrategy : "cheapest",
+    }));
+  }
 
   async function load(preferredCouponId = selectedCouponId) {
     const [nextCoupons, nextCategories, nextCollections, nextProducts] = await Promise.all([
@@ -158,8 +190,8 @@ function CouponsPanel({ isAdmin, onMessage, token }: PanelProps & { isAdmin: boo
         body: {
           minimumPurchaseAmount: form.minimumPurchaseAmount ? Number(form.minimumPurchaseAmount) : null,
           minimumItemsQuantity: form.minimumItemsQuantity ? Number(form.minimumItemsQuantity) : null,
-          maximumDiscountedItemsQuantity: form.maximumDiscountedItemsQuantity ? Number(form.maximumDiscountedItemsQuantity) : null,
-          applicationStrategy: form.scope === "item" ? form.applicationStrategy : null,
+          maximumDiscountedItemsQuantity: hasItemQuantityLimit ? Number(form.maximumDiscountedItemsQuantity) : null,
+          applicationStrategy: hasItemQuantityLimit ? form.applicationStrategy : null,
           maximumTotalUses: form.maximumTotalUses ? Number(form.maximumTotalUses) : null,
           maximumUsesPerUser: form.maximumUsesPerUser ? Number(form.maximumUsesPerUser) : null,
         },
@@ -223,18 +255,21 @@ function CouponsPanel({ isAdmin, onMessage, token }: PanelProps & { isAdmin: boo
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
             <Field label="Codigo"><input className="admin-input" required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
             <Field label="Nombre"><input className="admin-input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-            <Field label="Alcance"><select className="admin-input" value={form.scope} onChange={(e) => setForm({ ...form, scope: e.target.value })}><option value="order">Orden completa</option><option value="item">Prenda o cantidad</option></select></Field>
+            <Field label="Alcance"><select className="admin-input" value={form.scope} onChange={(e) => changeScope(e.target.value)}><option value="order">Orden completa</option><option value="item">Una prenda del carrito</option></select></Field>
             <Field label="Tipo de descuento"><select className="admin-input" value={form.discountType} onChange={(e) => setForm({ ...form, discountType: e.target.value })}><option value="percentage">Porcentaje</option><option value="amount">Monto fijo</option></select></Field>
-            <Field label="Valor"><input className="admin-input" min="0" required step="0.01" type="number" value={form.discountValue} onChange={(e) => setForm({ ...form, discountValue: e.target.value })} /></Field>
+            <Field label="Valor"><input className="admin-input" max={form.discountType === "percentage" ? 100 : undefined} min="0.01" required step="0.01" type="number" value={form.discountValue} onChange={(e) => setForm({ ...form, discountValue: e.target.value })} /></Field>
             <Field label="Usos por usuario"><input className="admin-input" min="1" type="number" value={form.maximumUsesPerUser} onChange={(e) => setForm({ ...form, maximumUsesPerUser: e.target.value })} /></Field>
             <Field label="Inicio"><input className="admin-input" required type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></Field>
             <Field label="Fin"><input className="admin-input" required type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} /></Field>
-            <Field label="Compra minima"><input className="admin-input" min="0" step="0.01" type="number" value={form.minimumPurchaseAmount} onChange={(e) => setForm({ ...form, minimumPurchaseAmount: e.target.value })} /></Field>
-            <Field label="Items minimos"><input className="admin-input" min="1" type="number" value={form.minimumItemsQuantity} onChange={(e) => setForm({ ...form, minimumItemsQuantity: e.target.value })} /></Field>
-            <Field label="Items con descuento"><input className="admin-input" min="1" type="number" value={form.maximumDiscountedItemsQuantity} onChange={(e) => setForm({ ...form, maximumDiscountedItemsQuantity: e.target.value })} /></Field>
+            <Field label="Compra minima elegible"><input className="admin-input" min="0" step="0.01" type="number" value={form.minimumPurchaseAmount} onChange={(e) => setForm({ ...form, minimumPurchaseAmount: e.target.value })} /></Field>
+            <Field label="Unidades minimas elegibles"><input className="admin-input" min="1" type="number" value={form.minimumItemsQuantity} onChange={(e) => setForm({ ...form, minimumItemsQuantity: e.target.value })} /></Field>
+            {form.scope === "item" ? <Field label="Maximo de unidades con descuento"><input className="admin-input" min="1" placeholder="Sin limite" type="number" value={form.maximumDiscountedItemsQuantity} onChange={(e) => setForm({ ...form, maximumDiscountedItemsQuantity: e.target.value })} /></Field> : null}
             <Field label="Usos totales"><input className="admin-input" min="1" type="number" value={form.maximumTotalUses} onChange={(e) => setForm({ ...form, maximumTotalUses: e.target.value })} /></Field>
+            <div className="sm:col-span-2 rounded-lg border border-rose-100 bg-rose-50/60 px-4 py-3 text-sm leading-6 text-zinc-600">
+              {form.scope === "order" ? "Se descuenta una sola vez sobre el subtotal elegible de toda la orden. No se limita por cantidad de prendas." : "Se descuenta sobre una prenda elegible del carrito. Puedes limitar cuantas unidades reciben el descuento."}
+            </div>
           </div>
-          {form.scope === "item" ? <Field label="Estrategia"><select className="admin-input mt-3" value={form.applicationStrategy} onChange={(e) => setForm({ ...form, applicationStrategy: e.target.value })}><option value="cheapest">Prenda mas barata</option><option value="mostExpensive">Prenda mas cara</option><option value="firstAdded">Primera agregada</option></select></Field> : null}
+          {hasItemQuantityLimit ? <Field label="Prioridad de descuento"><select className="admin-input mt-3" value={form.applicationStrategy} onChange={(e) => setForm({ ...form, applicationStrategy: e.target.value })}><option value="cheapest">Unidades mas baratas primero</option><option value="mostExpensive">Unidades mas caras primero</option><option value="firstAdded">Orden del carrito</option></select></Field> : null}
           <button className="admin-primary-button mt-5" disabled={isSubmitting}>Crear cupon</button>
         </form>
       ) : null}
@@ -469,7 +504,7 @@ function UbigeoPanel({ onMessage, token }: PanelProps) {
   return <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm"><PanelTitle title="Departamentos, provincias y distritos" text="El asistente puede corregir nombres y activar o desactivar ubicaciones." /><div className="mt-5 flex flex-wrap gap-2">{(["department", "province", "district"] as const).map((entry) => <button className={mode === entry ? "rounded-lg bg-zinc-950 px-3 py-2 text-sm text-white" : "rounded-lg border px-3 py-2 text-sm"} key={entry} onClick={() => chooseMode(entry)} type="button">{entry === "department" ? "Departamento" : entry === "province" ? "Provincia" : "Distrito"}</button>)}</div><div className="mt-5 grid gap-3 sm:grid-cols-2"><Field label="Departamento"><select className="admin-input" value={departmentId} onChange={(e) => { setDepartmentId(e.target.value); setProvinceId(""); setSelectedDistrictId(""); }}><option value="">Seleccionar</option>{departments.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></Field>{mode !== "department" ? <Field label="Provincia"><select className="admin-input" value={provinceId} onChange={(e) => { setProvinceId(e.target.value); setSelectedDistrictId(""); }}><option value="">Seleccionar</option>{provinces.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></Field> : null}{mode === "district" ? <Field label="Distrito"><select className="admin-input" value={selectedDistrictId} onChange={(e) => setSelectedDistrictId(e.target.value)}><option value="">Seleccionar</option>{districts.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></Field> : null}<Field label="Nombre"><input className="admin-input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>{mode === "department" ? <Field label="Tipo"><select className="admin-input" value={form.destinationType} onChange={(e) => setForm({ ...form, destinationType: e.target.value })}><option value="lima">Lima</option><option value="province">Provincia</option></select></Field> : null}{mode === "district" ? <Field label="Ubigeo"><input className="admin-input" value={form.ubigeo} onChange={(e) => setForm({ ...form, ubigeo: e.target.value })} /></Field> : null}</div><div className="mt-5 flex flex-wrap gap-2"><button className="admin-primary-button" onClick={() => setIsNew(true)} type="button">Crear nuevo</button><button className="admin-primary-button" disabled={(mode === "department" ? !departmentId : mode === "province" ? !provinceId : !selectedDistrictId)} onClick={() => setIsNew(false)} type="button">Editar seleccionado</button><button className="admin-secondary-button" onClick={save}>Guardar</button><button className="admin-secondary-button" disabled={isNew || (mode === "district" ? !selectedDistrictId : mode === "province" ? !provinceId : !departmentId)} onClick={() => void removeSelected()} type="button">Desactivar</button></div><p className="mt-3 text-xs text-zinc-500">Selecciona una entidad para editarla o desactivarla; crear una nueva usa la jerarquia seleccionada.</p></section>;
 }
 
-function StockPanel({ onMessage, token }: PanelProps) {
+function StockPanel({ initialVariantId, onMessage, token }: PanelProps & { initialVariantId?: string }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [selectedVariantId, setSelectedVariantId] = useState("");
@@ -481,8 +516,9 @@ function StockPanel({ onMessage, token }: PanelProps) {
   async function load() {
     const nextProducts = await apiRequest<Product[]>("/api/products?onlyActive=true", { token });
     const allVariants = (await Promise.all(nextProducts.map((product) => apiRequest<ProductVariant[]>("/api/product-variants/product/" + product.id, { token }).catch(() => [])))).flat();
-    setProducts(nextProducts); setVariants(allVariants); setProductId((current) => current || nextProducts[0]?.id || "");
-    setSelectedVariantId((current) => current || allVariants[0]?.id || "");
+    const initialVariant = allVariants.find((variant) => variant.id === initialVariantId);
+    setProducts(nextProducts); setVariants(allVariants); setProductId((current) => current || initialVariant?.productId || nextProducts[0]?.id || "");
+    setSelectedVariantId((current) => current || initialVariant?.id || allVariants[0]?.id || "");
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { const timeoutId = window.setTimeout(() => { void load().catch((error: Error) => onMessage(error.message)); }, 0); return () => window.clearTimeout(timeoutId); }, [token]);

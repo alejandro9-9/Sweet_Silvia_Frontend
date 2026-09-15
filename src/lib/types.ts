@@ -61,6 +61,7 @@ export type Product = {
   basePrice: number;
   currency: string;
   isActive: boolean;
+  displayOrder?: number;
 };
 
 export type ProductVariant = {

@@ -1,7 +1,7 @@
 "use client";
 
-import Script from "next/script";
 import { useEffect, useRef, useState } from "react";
+import { clientEnv } from "@/lib/env";
 
 type GoogleSignInButtonProps = {
   actionLabel?: string;
@@ -24,8 +24,38 @@ declare global {
   }
 }
 
+let googleScriptPromise: Promise<void> | null = null;
+
+function loadGoogleIdentityScript() {
+  if (window.google) {
+    return Promise.resolve();
+  }
+
+  if (googleScriptPromise) {
+    return googleScriptPromise;
+  }
+
+  googleScriptPromise = new Promise<void>((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>('script[data-sweet-silvia-google="true"]');
+    const script = existingScript ?? document.createElement("script");
+
+    script.addEventListener("load", () => resolve(), { once: true });
+    script.addEventListener("error", () => reject(new Error("No se pudo cargar Google Identity.")), { once: true });
+
+    if (!existingScript) {
+      script.dataset.sweetSilviaGoogle = "true";
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+  });
+
+  return googleScriptPromise;
+}
+
 export function GoogleSignInButton({ actionLabel = "Ingresar con Google", onCredential, onError }: GoogleSignInButtonProps) {
-  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  const clientId = clientEnv.googleClientId;
   const buttonRef = useRef<HTMLDivElement>(null);
   const callbackRef = useRef(onCredential);
   const [isScriptReady, setIsScriptReady] = useState(false);
@@ -69,6 +99,22 @@ export function GoogleSignInButton({ actionLabel = "Ingresar con Google", onCred
     });
   }, [clientId, isScriptReady, onError]);
 
+  useEffect(() => {
+    if (!clientId) {
+      return;
+    }
+
+    loadGoogleIdentityScript()
+      .then(() => {
+        setScriptError(false);
+        setIsScriptReady(true);
+      })
+      .catch(() => {
+        setScriptError(true);
+        onError("No se pudo cargar el acceso de Google. Revisa tu conexion e intentalo nuevamente.");
+      });
+  }, [clientId, onError]);
+
   if (!clientId) {
     return (
       <div className="rounded-[10px] border border-dashed border-[#d8c8c8] bg-[#fbf6f4] p-4 text-center">
@@ -87,19 +133,6 @@ export function GoogleSignInButton({ actionLabel = "Ingresar con Google", onCred
           <p className="mt-0.5 text-xs text-[#8e7c80]">{actionLabel.startsWith("Registr") ? "Crea tu cuenta de forma rapida y segura." : "Accede de forma rapida y segura."}</p>
         </div>
       </div>
-
-      <Script
-        src="https://accounts.google.com/gsi/client"
-        strategy="afterInteractive"
-        onLoad={() => {
-          setScriptError(false);
-          setIsScriptReady(true);
-        }}
-        onError={() => {
-          setScriptError(true);
-          onError("No se pudo cargar el acceso de Google. Revisa tu conexion e intentalo nuevamente.");
-        }}
-      />
 
       {scriptError ? (
         <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs leading-5 text-red-800" role="alert">

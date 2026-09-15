@@ -1,7 +1,7 @@
 "use client";
 
-import Image from "next/image";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { apiRequest, publicAssetUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { canAdminister } from "@/lib/roles";
@@ -14,8 +14,74 @@ type ProductImageDraft = {
   isMain: boolean;
 };
 
+type DetectedImageType = {
+  extension: "jpg" | "png" | "webp";
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
+};
+
+function detectImageType(bytes: Uint8Array): DetectedImageType | null {
+  const isJpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (isJpeg) {
+    return { extension: "jpg", mimeType: "image/jpeg" };
+  }
+
+  const isPng =
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a;
+  if (isPng) {
+    return { extension: "png", mimeType: "image/png" };
+  }
+
+  const isWebp =
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50;
+  return isWebp ? { extension: "webp", mimeType: "image/webp" } : null;
+}
+
+async function prepareImageFile(file: File) {
+  const bytes = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  const detectedType = detectImageType(bytes);
+  if (!detectedType) {
+    throw new Error("Selecciona una imagen JPG, PNG o WEBP valida.");
+  }
+
+  const currentExtension = file.name.match(/\.[^.]+$/)?.[0].toLowerCase();
+  const extension =
+    detectedType.mimeType === "image/jpeg" && (currentExtension === ".jpg" || currentExtension === ".jpeg")
+      ? currentExtension.slice(1)
+      : detectedType.extension;
+  const normalizedName = /\.[^.]+$/.test(file.name)
+    ? file.name.replace(/\.[^.]+$/, `.${extension}`)
+    : `${file.name}.${extension}`;
+
+  if (normalizedName === file.name && file.type === detectedType.mimeType) {
+    return file;
+  }
+
+  return new File([file], normalizedName, {
+    type: detectedType.mimeType,
+    lastModified: file.lastModified,
+  });
+}
+
 export function ProductImageUploadForm() {
   const { token, user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const requestedProductId = searchParams.get("productId") ?? "";
   const [products, setProducts] = useState<Product[]>([]);
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [images, setImages] = useState<ProductImage[]>([]);
@@ -38,9 +104,14 @@ export function ProductImageUploadForm() {
 
   useEffect(() => {
     apiRequest<Product[]>("/api/products?onlyActive=true", { token })
-      .then(setProducts)
+      .then((nextProducts) => {
+        setProducts(nextProducts);
+        setProductId((currentProductId) =>
+          currentProductId || (requestedProductId && nextProducts.some((product) => product.id === requestedProductId) ? requestedProductId : ""),
+        );
+      })
       .catch((error: Error) => setMessage(error.message));
-  }, [token]);
+  }, [requestedProductId, token]);
 
   useEffect(() => {
     if (!productId) {
@@ -125,6 +196,8 @@ export function ProductImageUploadForm() {
         token,
       });
       await refreshImages(successMessage);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo actualizar la imagen.");
     } finally {
       setSavingImageId("");
     }
@@ -178,6 +251,8 @@ export function ProductImageUploadForm() {
         token,
       });
       await refreshImages("Orden actualizado.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo cambiar el orden de las imagenes.");
     } finally {
       setSavingImageId("");
     }
@@ -191,6 +266,8 @@ export function ProductImageUploadForm() {
         token,
       });
       await refreshImages("Imagen quitada del producto.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo quitar la imagen.");
     } finally {
       setSavingImageId("");
     }
@@ -203,6 +280,14 @@ export function ProductImageUploadForm() {
       return;
     }
 
+    let uploadFile: File;
+    try {
+      uploadFile = await prepareImageFile(file);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Selecciona una imagen JPG, PNG o WEBP valida.");
+      return;
+    }
+
     const formData = new FormData();
     formData.append("productId", productId);
     if (variantId) {
@@ -211,7 +296,7 @@ export function ProductImageUploadForm() {
     formData.append("altText", altText);
     formData.append("order", String(images.length + 1));
     formData.append("isMain", String(isMain));
-    formData.append("file", file);
+    formData.append("file", uploadFile);
 
     setIsUploading(true);
     setMessage("");
@@ -239,8 +324,10 @@ export function ProductImageUploadForm() {
       <form className="h-fit space-y-5 rounded-2xl border border-rose-100 bg-white/90 p-6 shadow-sm" onSubmit={handleSubmit}>
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-700">Carga</p>
-          <h2 className="mt-1 text-xl font-semibold">Nueva imagen</h2>
-          <p className="mt-1 text-sm text-zinc-500">Formatos permitidos: JPG, PNG y WEBP.</p>
+          <h2 className="mt-1 text-xl font-semibold">{productId ? "Nueva imagen" : "Selecciona un producto"}</h2>
+          <p className="mt-1 text-sm text-zinc-500">
+            {productId ? "Formatos permitidos: JPG, PNG y WEBP." : "Elige un producto para habilitar la carga de imagenes."}
+          </p>
         </div>
 
         <label className="block text-sm font-medium">
@@ -251,6 +338,11 @@ export function ProductImageUploadForm() {
             onChange={(event) => {
               setProductId(event.target.value);
               setVariantId("");
+              clearSelectedFile();
+              setAltText("");
+              setIsMain(false);
+              setResult(null);
+              setMessage("");
             }}
           >
             <option value="">Seleccionar producto</option>
@@ -262,74 +354,82 @@ export function ProductImageUploadForm() {
           </select>
         </label>
 
-        <label className="block text-sm font-medium">
-          Variante
-          <select className="admin-input mt-2" value={variantId} onChange={(event) => setVariantId(event.target.value)}>
-            <option value="">Sin variante especifica</option>
-            {variants.map((variant) => (
-              <option key={variant.id} value={variant.id}>
-                {variant.size} - {variant.color} - {variant.sku}
-              </option>
-            ))}
-          </select>
-        </label>
+        {productId ? (
+          <>
+            <label className="block text-sm font-medium">
+              Variante
+              <select className="admin-input mt-2" value={variantId} onChange={(event) => setVariantId(event.target.value)}>
+                <option value="">Sin variante especifica</option>
+                {variants.map((variant) => (
+                  <option key={variant.id} value={variant.id}>
+                    {variant.size} - {variant.color} - {variant.sku}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block text-sm font-medium">
-            Texto alternativo
-            <input className="admin-input mt-2" value={altText} onChange={(event) => setAltText(event.target.value)} />
-          </label>
-          <div className="rounded-xl border border-rose-100 bg-rose-50/60 px-4 py-3 text-sm">
-            <p className="font-medium">Orden automatico</p>
-            <p className="mt-1 text-zinc-500">Nueva posicion: {images.length + 1}</p>
-          </div>
-        </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block text-sm font-medium">
+                Texto alternativo
+                <input className="admin-input mt-2" value={altText} onChange={(event) => setAltText(event.target.value)} />
+              </label>
+              <div className="rounded-xl border border-rose-100 bg-rose-50/60 px-4 py-3 text-sm">
+                <p className="font-medium">Orden automatico</p>
+                <p className="mt-1 text-zinc-500">Nueva posicion: {images.length + 1}</p>
+              </div>
+            </div>
 
-        <label className="flex items-center gap-3 rounded-xl border border-rose-100 bg-rose-50/60 px-4 py-3 text-sm font-medium">
-          <input checked={isMain} type="checkbox" onChange={(event) => setIsMain(event.target.checked)} />
-          Imagen principal
-        </label>
+            <label className="flex items-center gap-3 rounded-xl border border-rose-100 bg-rose-50/60 px-4 py-3 text-sm font-medium">
+              <input checked={isMain} type="checkbox" onChange={(event) => setIsMain(event.target.checked)} />
+              Imagen principal
+            </label>
 
-        <label className="block text-sm font-medium">
-          Archivo
-          <input
-            key={fileInputKey}
-            ref={fileInputRef}
-            className="mt-2 w-full rounded-xl border border-dashed border-rose-200 bg-white px-3 py-3 text-sm"
-            accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-            type="file"
-            onChange={handleFileChange}
-          />
-        </label>
-
-        {previewUrl ? (
-          <div className="overflow-hidden rounded-2xl border border-rose-100 bg-stone-50">
-            <div className="relative h-72 w-full bg-stone-100">
-              <Image
-                alt={altText || file?.name || "Vista previa de imagen"}
-                className="object-cover"
-                fill
-                src={previewUrl}
-                unoptimized
+            <label className="block text-sm font-medium">
+              Archivo
+              <input
+                key={fileInputKey}
+                ref={fileInputRef}
+                className="mt-2 w-full rounded-xl border border-dashed border-rose-200 bg-white px-3 py-3 text-sm"
+                accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                type="file"
+                onChange={handleFileChange}
               />
-            </div>
-            <div className="border-t border-rose-100 bg-white px-4 py-3">
-              <p className="truncate text-sm font-semibold text-zinc-950">{file?.name}</p>
-              <p className="mt-1 text-xs text-zinc-500">Vista previa antes de subir</p>
-            </div>
-          </div>
-        ) : null}
+            </label>
 
-        <button className="admin-primary-button w-full" disabled={isUploading} type="submit">
-          {isUploading ? "Subiendo..." : "Subir imagen"}
-        </button>
+            {previewUrl ? (
+              <div className="overflow-hidden rounded-2xl border border-rose-100 bg-stone-50">
+                <div className="relative h-72 w-full bg-stone-100">
+                  <img
+                    alt={altText || file?.name || "Vista previa de imagen"}
+                    className="absolute inset-0 h-full w-full object-cover"
+                    src={previewUrl}
+                  />
+                </div>
+                <div className="border-t border-rose-100 bg-white px-4 py-3">
+                  <p className="truncate text-sm font-semibold text-zinc-950">{file?.name}</p>
+                  <p className="mt-1 text-xs text-zinc-500">Vista previa antes de subir</p>
+                </div>
+              </div>
+            ) : null}
+
+            <button className="admin-primary-button w-full" disabled={isUploading} type="submit">
+              {isUploading ? "Subiendo..." : "Subir imagen"}
+            </button>
+
+            {result ? (
+              <a className="block text-sm font-medium text-rose-700" href={publicAssetUrl(result.url)} target="_blank">
+                Ver archivo subido
+              </a>
+            ) : null}
+          </>
+        ) : (
+          <div className="rounded-xl border border-dashed border-rose-200 bg-rose-50/40 p-4 text-sm text-zinc-600">
+            <p className="font-medium text-zinc-900">Selecciona un producto para continuar.</p>
+            <p className="mt-1">Aqui apareceran la variante, el archivo y el boton para subir la imagen.</p>
+          </div>
+        )}
 
         {message ? <p className="rounded-xl border border-rose-100 bg-rose-50/60 p-3 text-sm text-zinc-700">{message}</p> : null}
-        {result ? (
-          <a className="block text-sm font-medium text-rose-700" href={publicAssetUrl(result.url)} target="_blank">
-            Ver archivo subido
-          </a>
-        ) : null}
       </form>
 
       <section className="rounded-2xl border border-rose-100 bg-white/90 shadow-sm">
@@ -416,7 +516,7 @@ function ProductImageCard({
   return (
     <article className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
       <div className="relative aspect-[4/5] bg-stone-100">
-        <Image alt={image.altText ?? "Imagen de producto"} className="object-cover" fill sizes="(min-width: 768px) 360px, 100vw" src={publicAssetUrl(image.url)} unoptimized />
+        <img alt={image.altText ?? "Imagen de producto"} className="absolute inset-0 h-full w-full object-cover" loading="lazy" src={publicAssetUrl(image.url)} />
         {draft.isMain ? (
           <span className="absolute left-3 top-3 rounded-full bg-rose-700 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white">
             Principal

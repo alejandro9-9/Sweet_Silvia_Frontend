@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "@/components/RouterLink";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -15,8 +15,13 @@ type CreatedResponse = {
 type TaxonomyType = "category" | "collection";
 type EditorMode = "create" | "edit";
 type CatalogTab = "categories" | "collections" | "products" | "variants";
+type ProductMoveDirection = "up" | "down";
 
 const currency = "PEN";
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
 
 export function ProductAdmin() {
   const { token, user } = useAuth();
@@ -30,6 +35,7 @@ export function ProductAdmin() {
   const [activeTab, setActiveTab] = useState<CatalogTab>("products");
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [movingProductId, setMovingProductId] = useState("");
 
   const loadCatalogBase = useCallback(async () => {
     const [nextCategories, nextCollections, nextProducts] = await Promise.all([
@@ -136,6 +142,22 @@ export function ProductAdmin() {
     setMessage(successMessage);
   }
 
+  async function saveCatalogChanges(successMessage: string, productId?: string) {
+    try {
+      await refreshCatalog(successMessage, productId);
+    } catch (error) {
+      setMessage(getErrorMessage(error, "No se pudieron actualizar los datos del catalogo."));
+    }
+  }
+
+  async function saveVariantChanges(successMessage: string, variantId?: string) {
+    try {
+      await refreshVariants(successMessage, variantId);
+    } catch (error) {
+      setMessage(getErrorMessage(error, "No se pudieron actualizar las variantes."));
+    }
+  }
+
   async function deleteEntity(endpoint: string, successMessage: string) {
     if (!isAdministrator || !window.confirm("Esta accion desactivara el registro. Continuar?")) {
       return;
@@ -150,12 +172,45 @@ export function ProductAdmin() {
     }
   }
 
+  async function moveProduct(productId: string, direction: ProductMoveDirection) {
+    if (!isAdministrator) {
+      return;
+    }
+
+    const currentIndex = products.findIndex((product) => product.id === productId);
+    const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= products.length || movingProductId) {
+      return;
+    }
+
+    const productName = products[currentIndex].name;
+    const nextProducts = [...products];
+    [nextProducts[currentIndex], nextProducts[nextIndex]] = [nextProducts[nextIndex], nextProducts[currentIndex]];
+    setMovingProductId(productId);
+    setProducts(nextProducts);
+    try {
+      await apiRequest<void>("/api/products/order", {
+        body: { productIds: nextProducts.map((product) => product.id) },
+        method: "PUT",
+        token,
+      });
+      await loadCatalogBase();
+      setSelectedProductId(productId);
+      setMessage(`${productName} ahora ocupa la posicion ${nextIndex + 1}.`);
+    } catch (error) {
+      setProducts(products);
+      setMessage(error instanceof Error ? error.message : "No se pudo cambiar el orden del producto.");
+    } finally {
+      setMovingProductId("");
+    }
+  }
+
   return (
     <div className="space-y-6">
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric active={activeTab === "products"} label="Productos" value={products.length} onClick={() => setActiveTab("products")} />
         {isAdministrator ? <Metric active={activeTab === "categories"} label="Categorias" value={categories.length} onClick={() => setActiveTab("categories")} /> : null}
         {isAdministrator ? <Metric active={activeTab === "collections"} label="Colecciones" value={collections.length} onClick={() => setActiveTab("collections")} /> : null}
+        <Metric active={activeTab === "products"} label="Productos" value={products.length} onClick={() => setActiveTab("products")} />
         <Metric active={activeTab === "variants"} label="Variantes" value={variants.length} onClick={() => setActiveTab("variants")} />
       </section>
 
@@ -166,7 +221,8 @@ export function ProductAdmin() {
           description="Organiza las familias principales que se mostraran en el catalogo publico."
           items={categories}
           label="Categoria"
-          onSaved={() => refreshCatalog("Categoria guardada.")}
+          onError={(message) => setMessage(message)}
+          onSaved={() => saveCatalogChanges("Categoria guardada.")}
           onDelete={(id) => deleteEntity(`/api/categories/${id}`, "Categoria desactivada.")}
           token={token}
           type="category"
@@ -178,7 +234,8 @@ export function ProductAdmin() {
           description="Agrupa productos por temporadas, estilos o campanas comerciales."
           items={collections}
           label="Coleccion"
-          onSaved={() => refreshCatalog("Coleccion guardada.")}
+          onError={(message) => setMessage(message)}
+          onSaved={() => saveCatalogChanges("Coleccion guardada.")}
           onDelete={(id) => deleteEntity(`/api/collections/${id}`, "Coleccion desactivada.")}
           token={token}
           type="collection"
@@ -190,31 +247,34 @@ export function ProductAdmin() {
           categories={categories}
           collections={collections}
           isLoading={isLoading}
-          onSaved={(productId, mode) =>
-            refreshCatalog(mode === "create" ? "Producto creado. Ya puedes registrar variantes e imagenes." : "Producto actualizado.", productId)
-          }
+          onError={(errorMessage) => setMessage(errorMessage)}
+          onSaved={(productId, mode) => saveCatalogChanges(mode === "create" ? "Producto creado. Ya puedes registrar variantes e imagenes." : "Producto actualizado.", productId)}
           onDelete={(id) => deleteEntity(`/api/products/${id}`, "Producto desactivado.")}
           onSelectProduct={(productId) => {
             setSelectedProductId(productId);
             setSelectedVariantId("");
           }}
+          onMove={isAdministrator ? moveProduct : undefined}
           product={selectedProduct}
           products={products}
           selectedProductId={selectedProductId}
+          movingProductId={movingProductId}
           token={token}
         />
       ) : null}
 
       {activeTab === "variants" ? (
         <VariantWorkspace
+          canAdjustStock={isAdministrator}
           isLoading={isLoading}
+          onError={(errorMessage) => setMessage(errorMessage)}
           onDelete={(id) => deleteEntity(`/api/product-variants/${id}`, "Variante desactivada.")}
           onSelectProduct={(productId) => {
             setSelectedProductId(productId);
             setSelectedVariantId("");
           }}
           onSelectVariant={setSelectedVariantId}
-          onSaved={(variantId, mode) => refreshVariants(mode === "create" ? "Variante creada." : "Variante actualizada.", variantId)}
+          onSaved={(variantId, mode) => saveVariantChanges(mode === "create" ? "Variante creada." : "Variante actualizada.", variantId)}
           product={selectedProduct}
           products={products}
           selectedProductId={selectedProductId}
@@ -250,6 +310,7 @@ function TaxonomyWorkspace({
   label,
   token,
   type,
+  onError,
   onSaved,
   onDelete,
 }: {
@@ -258,13 +319,14 @@ function TaxonomyWorkspace({
   label: string;
   token: string | null;
   type: TaxonomyType;
+  onError: (message: string) => void;
   onSaved: () => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
   return (
     <section className="grid gap-6 xl:grid-cols-[340px_1fr]">
       <EntityList description={description} emptyText={`Aun no hay ${label.toLowerCase()}s registradas.`} items={items} onDelete={onDelete} title={`${label}s activas`} />
-      <TaxonomyManager items={items} label={label} onSaved={onSaved} token={token} type={type} />
+      <TaxonomyManager items={items} label={label} onError={onError} onSaved={onSaved} token={token} type={type} />
     </section>
   );
 }
@@ -316,9 +378,12 @@ function ProductWorkspace({
   products,
   selectedProductId,
   token,
+  onError,
   onSaved,
   onSelectProduct,
   onDelete,
+  onMove,
+  movingProductId,
 }: {
   categories: Category[];
   collections: Collection[];
@@ -327,19 +392,31 @@ function ProductWorkspace({
   products: Product[];
   selectedProductId: string;
   token: string | null;
+  onError: (message: string) => void;
   onSaved: (productId: string, mode: EditorMode) => Promise<void>;
   onSelectProduct: (productId: string) => void;
   onDelete: (id: string) => Promise<void>;
+  onMove?: (id: string, direction: ProductMoveDirection) => Promise<void>;
+  movingProductId?: string;
 }) {
   return (
     <section className="grid gap-6 xl:grid-cols-[340px_1fr]">
-      <ProductSelector isLoading={isLoading} products={products} selectedProductId={selectedProductId} onDelete={onDelete} onSelectProduct={onSelectProduct} />
-      <ProductEditor categories={categories} collections={collections} onSaved={onSaved} product={product} token={token} />
+      <ProductSelector
+        isLoading={isLoading}
+        movingProductId={movingProductId}
+        onDelete={onDelete}
+        onMove={onMove}
+        onSelectProduct={onSelectProduct}
+        products={products}
+        selectedProductId={selectedProductId}
+      />
+      <ProductEditor categories={categories} collections={collections} onError={onError} onSaved={onSaved} product={product} token={token} />
     </section>
   );
 }
 
 function VariantWorkspace({
+  canAdjustStock,
   isLoading,
   product,
   products,
@@ -348,11 +425,13 @@ function VariantWorkspace({
   selectedVariantId,
   token,
   variants,
+  onError,
   onSaved,
   onSelectProduct,
   onSelectVariant,
   onDelete,
 }: {
+  canAdjustStock: boolean;
   isLoading: boolean;
   product: Product | null;
   products: Product[];
@@ -361,6 +440,7 @@ function VariantWorkspace({
   selectedVariantId: string;
   token: string | null;
   variants: ProductVariant[];
+  onError: (message: string) => void;
   onSaved: (variantId: string | undefined, mode: EditorMode) => Promise<void>;
   onSelectProduct: (productId: string) => void;
   onSelectVariant: (variantId: string) => void;
@@ -369,7 +449,7 @@ function VariantWorkspace({
   return (
     <section className="grid gap-6 2xl:grid-cols-[300px_1fr_360px]">
       <ProductSelector isLoading={isLoading} products={products} selectedProductId={selectedProductId} onSelectProduct={onSelectProduct} />
-      <VariantEditor onSaved={onSaved} product={product} selectedVariant={selectedVariant} token={token} />
+      <VariantEditor canAdjustStock={canAdjustStock} onError={onError} onSaved={onSaved} product={product} selectedVariant={selectedVariant} token={token} />
       <VariantPanel product={product} selectedVariantId={selectedVariantId} variants={variants} onDelete={onDelete} onSelectVariant={onSelectVariant} />
     </section>
   );
@@ -381,36 +461,69 @@ function ProductSelector({
   selectedProductId,
   onSelectProduct,
   onDelete,
+  onMove,
+  movingProductId,
 }: {
   isLoading: boolean;
   products: Product[];
   selectedProductId: string;
   onSelectProduct: (productId: string) => void;
   onDelete?: (id: string) => Promise<void>;
+  onMove?: (id: string, direction: ProductMoveDirection) => Promise<void>;
+  movingProductId?: string;
 }) {
   return (
     <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
       <div className="border-b border-zinc-200 p-5">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-800">Productos</p>
-        <h2 className="mt-1 text-xl font-semibold">Listado activo</h2>
+        <h2 className="mt-1 text-xl font-semibold">Productos activos</h2>
         <p className="mt-2 text-sm leading-6 text-zinc-500">Selecciona una prenda para editarla o administrar sus variantes.</p>
       </div>
       {isLoading ? <p className="p-5 text-sm text-zinc-500">Cargando productos...</p> : null}
       {!isLoading && products.length === 0 ? <p className="p-5 text-sm text-zinc-500">Aun no hay productos registrados.</p> : null}
       <div className="max-h-[560px] space-y-2 overflow-y-auto p-3">
-        {products.map((product) => (
+        {products.map((product, index) => (
           <div className="flex gap-2" key={product.id}>
             <button
-            className={`min-w-0 flex-1 rounded-lg border px-4 py-4 text-left text-sm transition ${
-              selectedProductId === product.id ? "border-zinc-950 bg-zinc-950 text-white shadow-sm" : "border-zinc-200 bg-stone-50 hover:border-zinc-950"
-            }`}
-            onClick={() => onSelectProduct(product.id)}
-            type="button"
-          >
-            <span className="block font-semibold uppercase tracking-[0.05em]">{product.name}</span>
-            <span className={selectedProductId === product.id ? "mt-1 block text-zinc-300" : "mt-1 block text-zinc-500"}>{formatMoney(product.basePrice, product.currency)}</span>
+              className={`min-w-0 flex-1 rounded-lg border px-4 py-4 text-left text-sm transition ${
+                selectedProductId === product.id ? "border-zinc-950 bg-zinc-950 text-white shadow-sm" : "border-zinc-200 bg-stone-50 hover:border-zinc-950"
+              }`}
+              onClick={() => onSelectProduct(product.id)}
+              type="button"
+            >
+              <span className="flex items-center gap-2 font-semibold uppercase tracking-[0.05em]">
+                <span className={selectedProductId === product.id ? "grid size-6 shrink-0 place-items-center rounded-full bg-white/15 text-xs" : "grid size-6 shrink-0 place-items-center rounded-full bg-zinc-200 text-xs text-zinc-600"}>{index + 1}</span>
+                <span className="min-w-0 truncate">{product.name}</span>
+              </span>
+              <span className={selectedProductId === product.id ? "mt-1 block text-zinc-300" : "mt-1 block text-zinc-500"}>{formatMoney(product.basePrice, product.currency)}</span>
             </button>
-            {onDelete ? <button aria-label={`Desactivar ${product.name}`} className="rounded-lg border border-rose-200 px-3 text-xs font-semibold text-rose-800 hover:bg-rose-50" onClick={() => void onDelete(product.id)} type="button">Desactivar</button> : null}
+            <div className="flex shrink-0 flex-col gap-2">
+              {onMove ? (
+                <div className="flex gap-1">
+                  <button
+                    aria-label={`Subir ${product.name}`}
+                    className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold text-zinc-700 hover:border-zinc-950 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={Boolean(movingProductId) || index === 0}
+                    onClick={() => void onMove(product.id, "up")}
+                    title="Subir producto"
+                    type="button"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    aria-label={`Bajar ${product.name}`}
+                    className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold text-zinc-700 hover:border-zinc-950 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={Boolean(movingProductId) || index === products.length - 1}
+                    onClick={() => void onMove(product.id, "down")}
+                    title="Bajar producto"
+                    type="button"
+                  >
+                    ↓
+                  </button>
+                </div>
+              ) : null}
+              {onDelete ? <button aria-label={`Desactivar ${product.name}`} className="rounded-lg border border-rose-200 px-3 py-2 text-[11px] font-semibold text-rose-800 hover:bg-rose-50" onClick={() => void onDelete(product.id)} type="button">Desactivar</button> : null}
+            </div>
           </div>
         ))}
       </div>
@@ -423,12 +536,14 @@ function TaxonomyManager({
   label,
   token,
   type,
+  onError,
   onSaved,
 }: {
   items: Category[] | Collection[];
   label: string;
   token: string | null;
   type: TaxonomyType;
+  onError: (message: string) => void;
   onSaved: () => Promise<void>;
 }) {
   const [mode, setMode] = useState<EditorMode>("create");
@@ -470,6 +585,8 @@ function TaxonomyManager({
       });
       resetForm("create");
       await onSaved();
+    } catch (error) {
+      onError(getErrorMessage(error, "No se pudo guardar la categoria o coleccion."));
     } finally {
       setIsSubmitting(false);
     }
@@ -526,12 +643,14 @@ function TaxonomyManager({
 function ProductEditor({
   categories,
   collections,
+  onError,
   product,
   token,
   onSaved,
 }: {
   categories: Category[];
   collections: Collection[];
+  onError: (message: string) => void;
   product: Product | null;
   token: string | null;
   onSaved: (productId: string, mode: EditorMode) => Promise<void>;
@@ -589,6 +708,8 @@ function ProductEditor({
         await onSaved(productId, mode);
         setMode("edit");
       }
+    } catch (error) {
+      onError(getErrorMessage(error, "No se pudo guardar el producto."));
     } finally {
       setIsSubmitting(false);
     }
@@ -643,7 +764,7 @@ function ProductEditor({
             <input className="admin-input" required value={name} onChange={(event) => setName(event.target.value)} />
           </Field>
           <Field label="Precio base">
-            <input className="admin-input" inputMode="decimal" min="0" required step="0.01" type="number" value={basePrice} onChange={(event) => setBasePrice(event.target.value)} />
+          <input className="admin-input" inputMode="decimal" min="0.01" required step="0.01" type="number" value={basePrice} onChange={(event) => setBasePrice(event.target.value)} />
           </Field>
         </div>
 
@@ -655,7 +776,7 @@ function ProductEditor({
           <button className="admin-primary-button" disabled={isSubmitting || (mode === "edit" && !product)}>
             {mode === "create" ? "Crear producto" : "Guardar cambios"}
           </button>
-          <Link className="admin-secondary-button" href="/admin/uploads">
+          <Link className="admin-secondary-button" href={mode === "edit" && product ? "/admin/uploads?productId=" + encodeURIComponent(product.id) : "/admin/uploads"}>
             Gestionar imagenes
           </Link>
         </div>
@@ -665,11 +786,15 @@ function ProductEditor({
 }
 
 function VariantEditor({
+  canAdjustStock,
+  onError,
   product,
   selectedVariant,
   token,
   onSaved,
 }: {
+  canAdjustStock: boolean;
+  onError: (message: string) => void;
   product: Product | null;
   selectedVariant: ProductVariant | null;
   token: string | null;
@@ -761,6 +886,8 @@ function VariantEditor({
       if (mode === "create") {
         resetCreateForm();
       }
+    } catch (error) {
+      onError(getErrorMessage(error, "No se pudo guardar la variante."));
     } finally {
       setIsSubmitting(false);
     }
@@ -797,7 +924,7 @@ function VariantEditor({
           <Field label="SKU">
             <input className="admin-input disabled:bg-zinc-100 disabled:text-zinc-500" disabled={mode === "edit"} required value={sku} onChange={(event) => setSku(event.target.value)} />
           </Field>
-          <Field label="Stock inicial">
+          <Field label={mode === "edit" ? "Stock actual" : "Stock inicial"}>
             <input
               className="admin-input disabled:bg-zinc-100 disabled:text-zinc-500"
               disabled={mode === "edit"}
@@ -807,6 +934,11 @@ function VariantEditor({
               value={physicalStock}
               onChange={(event) => setPhysicalStock(event.target.value)}
             />
+            {mode === "edit" && selectedVariant && canAdjustStock ? (
+              <Link className="mt-2 inline-flex text-xs font-semibold uppercase tracking-[0.1em] text-rose-800 underline decoration-rose-200 underline-offset-4" href={`/admin/settings?tab=stock&variantId=${selectedVariant.id}`}>
+                Ajustar inventario
+              </Link>
+            ) : null}
           </Field>
         </div>
         <Field label="Precio especial">

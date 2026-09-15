@@ -1,4 +1,6 @@
-const whatsappPhone = process.env.NEXT_PUBLIC_WHATSAPP_PHONE ?? "51941872197";
+import { clientEnv } from "@/lib/env";
+
+const whatsappPhone = clientEnv.whatsappPhone ?? "51941872197";
 
 type WhatsappFloatingButtonProps = {
   message?: string;

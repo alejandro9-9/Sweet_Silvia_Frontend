@@ -1,14 +1,15 @@
 "use client";
 
-import Link from "next/link";
+import { useNavigate, useParams } from "react-router-dom";
+import { Link } from "@/components/RouterLink";
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
 import { apiRequest, publicAssetUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { addGuestCartItem, toGuestCartItem } from "@/lib/cart";
 import { findMockProduct, getMockProductImage, isPlaceholderImage, mockVariantsByProduct } from "@/lib/mock-catalog";
 import { getVariantEffectiveCurrency, getVariantEffectivePrice } from "@/lib/pricing";
+import { clientEnv } from "@/lib/env";
 import { CartNavLink } from "@/components/CartNavLink";
 import type { Product, ProductImage, ProductVariant } from "@/lib/types";
 
@@ -19,8 +20,8 @@ type GalleryImage = {
 
 export default function ProductDetailPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
-  const productId = params.id;
+  const navigate = useNavigate();
+  const productId = params.id ?? "";
   const { user } = useAuth();
   const [product, setProduct] = useState<Product | null>(null);
   const [images, setImages] = useState<ProductImage[]>([]);
@@ -33,7 +34,7 @@ export default function ProductDetailPage() {
 
   useEffect(() => {
     let isActive = true;
-    const mockProduct = process.env.NEXT_PUBLIC_ENABLE_MOCKS === "true" ? findMockProduct(productId) : null;
+    const mockProduct = clientEnv.enableMocks ? findMockProduct(productId) : null;
 
     const productRequest = mockProduct
       ? Promise.resolve(mockProduct)
@@ -123,12 +124,33 @@ export default function ProductDetailPage() {
 
     Promise.resolve().then(() => setSelectedImageIndex(0));
   }, [galleryImages.length, selectedImageIndex]);
+
+  useEffect(() => {
+    if (!selectedVariantId) {
+      return;
+    }
+
+    const variantImage = images
+      .filter((image) => image.productVariantId === selectedVariantId && !isPlaceholderImage(image.url))
+      .sort(sortGalleryImages)[0];
+    if (!variantImage) {
+      return;
+    }
+
+    const variantImageIndex = galleryImages.findIndex((image) => image.src === publicAssetUrl(variantImage.url));
+    if (variantImageIndex < 0) {
+      return;
+    }
+
+    setSelectedImageIndex((currentIndex) => (currentIndex === variantImageIndex ? currentIndex : variantImageIndex));
+  }, [galleryImages, images, selectedVariantId]);
+
   const unitPrice = product ? getVariantEffectivePrice(product, selectedVariant) : 0;
   const unitCurrency = product ? getVariantEffectiveCurrency(product, selectedVariant) : "PEN";
   const subtotal = unitPrice * quantity;
   const whatsappHref = product
     ? buildWhatsappHref({
-        phone: process.env.NEXT_PUBLIC_WHATSAPP_PHONE ?? "51941872197",
+        phone: clientEnv.whatsappPhone ?? "51941872197",
         productName: product.name,
         quantity,
         size: selectedVariant?.size ?? "Talla unica",
@@ -153,7 +175,7 @@ export default function ProductDetailPage() {
       }),
     );
     setMessage("Producto agregado al carrito.");
-    router.push("/cart");
+    navigate("/cart");
   }
 
   if (isLoading) {
@@ -491,7 +513,6 @@ function ProductImageWithFallback({
   const displaySrc = fallbackState.source === src && fallbackState.useFallback && fallbackSrc ? fallbackSrc : src;
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element
     <img
       alt={alt}
       className={className}

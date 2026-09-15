@@ -1,8 +1,7 @@
 "use client";
 
-import Image from "next/image";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
+import { Link } from "@/components/RouterLink";
 import { FormEvent, useState } from "react";
 import { BrandLogo } from "@/components/BrandLogo";
 import { GoogleSignInButton } from "@/components/GoogleSignInButton";
@@ -19,7 +18,7 @@ const brandImages = [
 ];
 
 export default function LoginPage() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const { login, loginWithGoogle, register } = useAuth();
   const [mode, setMode] = useState<LoginMode>("login");
   const [name, setName] = useState("");
@@ -33,7 +32,7 @@ export default function LoginPage() {
   const [isPersonalDataOpen, setIsPersonalDataOpen] = useState(false);
 
   function navigateByRole(role: ApiRole | undefined) {
-    router.push(role && canManageCatalog(role) ? "/dashboard" : "/");
+    navigate(role && canManageCatalog(role) ? "/dashboard" : "/");
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -85,13 +84,13 @@ export default function LoginPage() {
         <section className="relative hidden min-w-0 overflow-hidden bg-[#30272b] lg:flex">
           <div className="absolute inset-0 grid grid-cols-2 gap-3 p-3 opacity-90">
             <div className="relative row-span-2 min-h-full overflow-hidden rounded-[18px]">
-              <Image alt={brandImages[0].alt} className="object-cover" fill priority sizes="(min-width: 1024px) 32vw, 0px" src={brandImages[0].src} />
+              <img alt={brandImages[0].alt} className="absolute inset-0 h-full w-full object-cover" loading="eager" src={brandImages[0].src} />
             </div>
             <div className="relative min-h-0 overflow-hidden rounded-[18px]">
-              <Image alt={brandImages[1].alt} className="object-cover" fill sizes="(min-width: 1024px) 18vw, 0px" src={brandImages[1].src} />
+              <img alt={brandImages[1].alt} className="absolute inset-0 h-full w-full object-cover" loading="lazy" src={brandImages[1].src} />
             </div>
             <div className="relative min-h-0 overflow-hidden rounded-[18px]">
-              <Image alt={brandImages[2].alt} className="object-cover" fill sizes="(min-width: 1024px) 18vw, 0px" src={brandImages[2].src} />
+              <img alt={brandImages[2].alt} className="absolute inset-0 h-full w-full object-cover" loading="lazy" src={brandImages[2].src} />
             </div>
           </div>
           <div className="absolute inset-0 bg-[#30272b]/65" />
@@ -177,6 +176,7 @@ export default function LoginPage() {
               <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-[0.16em] text-[#ad9c9f]"><span className="h-px flex-1 bg-[#e6dcda]" />{mode === "register" ? "Registrarme con Google" : "Ingresar con Google"}<span className="h-px flex-1 bg-[#e6dcda]" /></div>
               <GoogleSignInButton actionLabel={mode === "register" ? "Registrarme con Google" : "Ingresar con Google"} onCredential={handleGoogleCredential} onError={setMessage} />
               {message ? <p className="rounded-[10px] border border-[#e8bfc4] bg-[#fff1f2] p-3 text-sm leading-5 text-[#923f50]" role="alert">{message}</p> : null}
+              {mode === "register" ? <p className="text-center text-[11px] leading-5 text-[#8e7c80]">Al crear tu cuenta aceptas los <Link className="font-semibold underline decoration-[#c99da5] underline-offset-2" href="/terms-and-conditions">terminos y condiciones</Link> y reconoces la <Link className="font-semibold underline decoration-[#c99da5] underline-offset-2" href="/privacy-policy">politica de privacidad</Link>.</p> : null}
               <p className="text-center text-[11px] leading-5 text-[#a9989b]">Tus datos se protegen con una conexion segura.</p>
             </form>
           </div>

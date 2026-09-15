@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
+import { Link } from "@/components/RouterLink";
 import { useEffect } from "react";
 import { AppShell, RoleGate, roleSummary } from "@/components/AppShell";
 import { useAuth } from "@/lib/auth";
@@ -17,13 +17,13 @@ export default function DashboardPage() {
 
 function DashboardContent() {
   const { user } = useAuth();
-  const router = useRouter();
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (user && !canManageCatalog(user.role)) {
-      router.replace("/profile");
+      navigate("/profile", { replace: true });
     }
-  }, [router, user]);
+  }, [navigate, user]);
 
   if (!user) {
     return null;

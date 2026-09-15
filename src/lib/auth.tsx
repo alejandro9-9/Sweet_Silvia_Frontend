@@ -29,7 +29,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
-  const didRestoreSession = useRef(false);
+  const sessionRestorePromise = useRef<Promise<string | null> | null>(null);
   const authChangeVersion = useRef(0);
 
   const persistToken = useCallback((nextToken: string | null) => {
@@ -40,6 +40,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const response = await apiRequest<LoginResponse>("/api/auth/refresh", {
       method: "POST",
       retryOnUnauthorized: false,
+      timeoutMs: 8000,
     });
     return response.token;
   }, []);
@@ -73,16 +74,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [persistToken, refresh]);
 
   useEffect(function restoreSessionFromCookie() {
-    if (didRestoreSession.current) {
-      return;
-    }
-
-    didRestoreSession.current = true;
     let isActive = true;
 
     const restoreVersion = authChangeVersion.current;
+    let restoreRequest = sessionRestorePromise.current;
+    if (!restoreRequest) {
+      restoreRequest = requestRefresh();
+      sessionRestorePromise.current = restoreRequest;
+      restoreRequest.then(
+        () => {
+          if (sessionRestorePromise.current === restoreRequest) {
+            sessionRestorePromise.current = null;
+          }
+        },
+        () => {
+          if (sessionRestorePromise.current === restoreRequest) {
+            sessionRestorePromise.current = null;
+          }
+        },
+      );
+    }
 
-    requestRefresh()
+    restoreRequest
       .then((nextToken) => {
         if (isActive && restoreVersion === authChangeVersion.current) {
           persistToken(nextToken);

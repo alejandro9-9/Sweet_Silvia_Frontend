@@ -1,12 +1,14 @@
 import type { ApiError } from "./types";
+import { clientEnv } from "./env";
 
 export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:8080";
+  clientEnv.apiUrl?.replace(/\/$/, "") ?? "http://localhost:8080";
 
 type ApiRequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
   token?: string | null;
   retryOnUnauthorized?: boolean;
+  timeoutMs?: number;
 };
 
 type AuthRefreshHandler = () => Promise<string | null>;
@@ -29,11 +31,13 @@ export class ApiClientError extends Error {
 }
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}) {
-  const { body, token, headers, retryOnUnauthorized = true, ...init } = options;
+  const { body, token, headers, retryOnUnauthorized = true, timeoutMs = 15000, ...init } = options;
   const isFormData = body instanceof FormData;
+  const requestControl = createRequestControl(init.signal, timeoutMs);
 
   const createFetchOptions = (activeToken: string | null | undefined): RequestInit => ({
     ...init,
+    signal: requestControl.signal,
     body: isFormData ? body : body === undefined ? undefined : JSON.stringify(body),
     credentials: "include",
     headers: {
@@ -43,64 +47,74 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     },
   });
 
-  let response = await fetch(`${API_URL}${path}`, createFetchOptions(token));
+  try {
+    let response = await fetch(`${API_URL}${path}`, createFetchOptions(token));
 
- if (response.status === 401 && token && retryOnUnauthorized && authRefreshHandler && path !== "/api/auth/refresh") {
-    const refreshHandler = authRefreshHandler;
-    authRefreshPromise ??= refreshHandler().finally(() => {
-      authRefreshPromise = null;
-    });
+    if (response.status === 401 && token && retryOnUnauthorized && authRefreshHandler && path !== "/api/auth/refresh") {
+      const refreshHandler = authRefreshHandler;
+      authRefreshPromise ??= refreshHandler().finally(() => {
+        authRefreshPromise = null;
+      });
 
-    const refreshedToken = await authRefreshPromise;
-    if (refreshedToken) {
-      response = await fetch(`${API_URL}${path}`, createFetchOptions(refreshedToken));
+      const refreshedToken = await authRefreshPromise;
+      if (refreshedToken) {
+        response = await fetch(`${API_URL}${path}`, createFetchOptions(refreshedToken));
+      }
     }
+
+    if (response.status === 204) {
+      return undefined as T;
+    }
+
+    const text = await response.text();
+    const payload = text ? safeParseJson(text) : null;
+
+    if (!response.ok) {
+      const message =
+        payload?.message ?? payload?.error ?? payload?.detail ?? payload?.title ?? "La solicitud no pudo completarse.";
+      throw new ApiClientError(message, response.status, payload);
+    }
+
+    return payload as T;
+  } finally {
+    requestControl.dispose();
   }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  const text = await response.text();
-  const payload = text ? safeParseJson(text) : null;
-
-  if (!response.ok) {
-    const message =
-      payload?.message ?? payload?.error ?? payload?.detail ?? payload?.title ?? "La solicitud no pudo completarse.";
-    throw new ApiClientError(message, response.status, payload);
-  }
-
-  return payload as T;
 }
 
 export async function apiDownload(path: string, token: string | null) {
+  const requestControl = createRequestControl(undefined, 15000);
   const createFetchOptions = (activeToken: string | null): RequestInit => ({
+    signal: requestControl.signal,
     credentials: "include",
     headers: activeToken ? { Authorization: `Bearer ${activeToken}` } : {},
   });
 
-  let response = await fetch(`${API_URL}${path}`, createFetchOptions(token));
+  try {
+    let response = await fetch(`${API_URL}${path}`, createFetchOptions(token));
 
-  if (response.status === 401 && token && authRefreshHandler && path !== "/api/auth/refresh") {
-    const refreshHandler = authRefreshHandler;
-    authRefreshPromise ??= refreshHandler().finally(() => {
-      authRefreshPromise = null;
-    });
+    if (response.status === 401 && token && authRefreshHandler && path !== "/api/auth/refresh") {
+      const refreshHandler = authRefreshHandler;
+      authRefreshPromise ??= refreshHandler().finally(() => {
+        authRefreshPromise = null;
+      });
 
-    const refreshedToken = await authRefreshPromise;
-    if (refreshedToken) {
-      response = await fetch(`${API_URL}${path}`, createFetchOptions(refreshedToken));
+      const refreshedToken = await authRefreshPromise;
+      if (refreshedToken) {
+        response = await fetch(`${API_URL}${path}`, createFetchOptions(refreshedToken));
+      }
     }
-  }
 
-  if (!response.ok) {
-    const text = await response.text();
-    const payload = text ? safeParseJson(text) : null;
-    const message = payload?.message ?? payload?.error ?? payload?.detail ?? payload?.title ?? "El archivo no pudo abrirse.";
-    throw new ApiClientError(message, response.status, payload);
-  }
+    if (!response.ok) {
+      const text = await response.text();
+      const payload = text ? safeParseJson(text) : null;
+      const message = payload?.message ?? payload?.error ?? payload?.detail ?? payload?.title ?? "El archivo no pudo abrirse.";
+      throw new ApiClientError(message, response.status, payload);
+    }
 
-  return response.blob();
+    return response.blob();
+  } finally {
+    requestControl.dispose();
+  }
 }
 
 export function publicAssetUrl(url: string) {
@@ -117,4 +131,24 @@ function safeParseJson(text: string) {
   } catch {
     return null;
   }
+}
+
+function createRequestControl(callerSignal: AbortSignal | null | undefined, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromCaller = () => controller.abort();
+
+  if (callerSignal?.aborted) {
+    controller.abort();
+  } else {
+    callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    dispose() {
+      globalThis.clearTimeout(timeoutId);
+      callerSignal?.removeEventListener("abort", abortFromCaller);
+    },
+  };
 }

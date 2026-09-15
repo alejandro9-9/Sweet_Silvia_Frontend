@@ -1,12 +1,13 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "@/components/RouterLink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClientError, apiRequest, publicAssetUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { readGuestCart, removeGuestCartItem, updateGuestCartItemQuantity, writeGuestCart, type GuestCartItem } from "@/lib/cart";
 import { persistCheckoutSession, readCheckoutSession } from "@/lib/checkout-session";
 import { getMockProductImage, isPlaceholderImage } from "@/lib/mock-catalog";
+import { clientEnv } from "@/lib/env";
 import type { Address, Cart, CartAppliedCouponSummary, Coupon, CreatedResponse, Department, District, IzipayPaymentLinkResponse, OlvaAgency, PaymentMethod, Product, ProductImage, ProductVariant, Province, ShippingCost, ShippingDestinationType, UserAccount } from "@/lib/types";
 
 type CartShippingOption = {
@@ -236,7 +237,7 @@ export default function CartPage() {
         setSelectedAddressId((currentId) => nextAddresses.some((address) => address.id === currentId) ? currentId : nextAddresses.find((address) => address.isDefault)?.id ?? nextAddresses[0]?.id ?? "");
         const availablePaymentMethods = nextPaymentMethods.filter((method) =>
           !(method.type === "gateway" && method.requiresExternalIntegration) ||
-          process.env.NEXT_PUBLIC_IZIPAY_ENABLED === "true",
+          clientEnv.izipayEnabled,
         );
         setPaymentMethods(availablePaymentMethods);
         setPaymentMethodId((currentId) => availablePaymentMethods.some((method) => method.id === currentId) ? currentId : availablePaymentMethods[0]?.id ?? "");
@@ -565,7 +566,7 @@ export default function CartPage() {
 
   async function submitPaymentForOrder(order: { id: string; total: number; currency: string }, paymentMethod: PaymentMethod) {
     if (paymentMethod.type === "gateway" && paymentMethod.requiresExternalIntegration) {
-      if (process.env.NEXT_PUBLIC_IZIPAY_ENABLED !== "true") {
+      if (!clientEnv.izipayEnabled) {
         throw new Error("Izipay se habilitara cuando la tienda este desplegada y sus URLs publicas esten configuradas.");
       }
 
@@ -660,7 +661,7 @@ export default function CartPage() {
         throw new Error("Selecciona un metodo de pago.");
       }
       if (paymentMethod.type === "gateway" && paymentMethod.requiresExternalIntegration) {
-        if (process.env.NEXT_PUBLIC_IZIPAY_ENABLED !== "true") {
+        if (!clientEnv.izipayEnabled) {
           throw new Error("Selecciona un metodo de pago manual mientras Izipay no este habilitado.");
         }
 
@@ -1025,7 +1026,6 @@ function CartItemImage({ item }: { item: GuestCartItem }) {
 
   return (
     <div className="aspect-[3/4] overflow-hidden bg-[#eee8df]">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         alt={item.productName}
         className="h-full w-full object-cover"

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PrivateFileLink } from "@/components/PrivateFileLink";
 import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -46,7 +47,12 @@ const shipmentTransitions: Record<ShipmentStatus, ShipmentStatus[]> = {
 
 export function AdminOperations() {
   const { token, user } = useAuth();
-  const [activeTab, setActiveTab] = useState<AdminTab>("orders");
+  const canManageUsersAndReviews = canAdminister(user?.role);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab") as AdminTab | null;
+  const requestedTabIsAvailable = requestedTab === "orders" || requestedTab === "payments" ||
+    (canManageUsersAndReviews && (requestedTab === "users" || requestedTab === "audit"));
+  const [activeTab, setActiveTab] = useState<AdminTab>(requestedTabIsAvailable ? (requestedTab as AdminTab) : "orders");
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -75,9 +81,29 @@ export function AdminOperations() {
   const selectedOrderShipments = selectedOrder ? shipmentsByOrder[selectedOrder.id] ?? [] : [];
   const cashPaymentMethodIds = useMemo(() => new Set(paymentMethods.filter((method) => method.type === "cash").map((method) => method.id)), [paymentMethods]);
   const pendingPayments = payments.filter((payment) => payment.status === "inReview" || (payment.status === "pendingReceipt" && cashPaymentMethodIds.has(payment.paymentMethodId)));
-  const canManageUsersAndReviews = canAdminister(user?.role);
   const canReviewSelectedPayment = canManageUsersAndReviews && selectedPayment !== null &&
     (selectedPayment.status === "inReview" || (selectedPayment.status === "pendingReceipt" && cashPaymentMethodIds.has(selectedPayment.paymentMethodId)));
+
+  useEffect(() => {
+    setActiveTab(requestedTabIsAvailable ? (requestedTab as AdminTab) : "orders");
+  }, [requestedTab, requestedTabIsAvailable]);
+
+  function selectTab(tab: AdminTab) {
+    setActiveTab(tab);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("tab", tab);
+      return next;
+    }, { replace: true });
+  }
+
+  async function runOperation(action: () => Promise<void>, fallback: string) {
+    try {
+      await action();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : fallback);
+    }
+  }
 
   useEffect(() => {
     let isActive = true;
@@ -154,10 +180,11 @@ export function AdminOperations() {
             setOrderStatusHistory(nextHistory);
           }
         })
-        .catch(() => {
+        .catch((error: Error) => {
           if (isActive) {
             setOrderItems([]);
             setOrderStatusHistory([]);
+            setMessage(error.message);
           }
         });
     }, 0);
@@ -224,7 +251,7 @@ export function AdminOperations() {
   }
 
   async function refreshOrderShipments(orderId: string) {
-    const nextShipments = await apiRequest<Shipment[]>(`/api/shipments/order/${orderId}`, { token }).catch(() => []);
+    const nextShipments = await apiRequest<Shipment[]>(`/api/shipments/order/${orderId}`, { token });
     setShipmentsByOrder((current) => ({ ...current, [orderId]: nextShipments }));
     return nextShipments;
   }
@@ -347,7 +374,7 @@ export function AdminOperations() {
   }
 
   function openPaymentsTab(preferPending = false) {
-    setActiveTab("payments");
+    selectTab("payments");
     if (preferPending) {
       setSelectedPaymentId(pendingPayments[0]?.id ?? payments[0]?.id ?? "");
     }
@@ -356,12 +383,12 @@ export function AdminOperations() {
   return (
     <div className="space-y-6">
       <section className="grid gap-4 md:grid-cols-5">
-        {canManageUsersAndReviews ? <OperationMetric active={activeTab === "users"} label="Usuarios" value={users.length} onClick={() => setActiveTab("users")} /> : null}
-        <OperationMetric active={activeTab === "orders"} label="Ordenes" value={operationalOrders.length} onClick={() => setActiveTab("orders")} />
+        {canManageUsersAndReviews ? <OperationMetric active={activeTab === "users"} label="Usuarios" value={users.length} onClick={() => selectTab("users")} /> : null}
+        <OperationMetric active={activeTab === "orders"} label="Ordenes" value={operationalOrders.length} onClick={() => selectTab("orders")} />
         <OperationMetric active={activeTab === "payments"} label="Pagos" value={payments.length} onClick={() => openPaymentsTab()} />
-        <OperationMetric active={activeTab === "payments" && pendingPayments.length > 0} label="Por revisar" value={pendingPayments.length} tone="rose" onClick={() => openPaymentsTab(true)} />
+        <OperationMetric active={activeTab === "payments" && pendingPayments.length > 0} label={canManageUsersAndReviews ? "Por revisar" : "Pendientes"} value={pendingPayments.length} tone="rose" onClick={() => openPaymentsTab(true)} />
         {canManageUsersAndReviews ? (
-          <OperationMetric active={activeTab === "audit"} label="Auditoria" value={visibleAuditLogs.length} onClick={() => setActiveTab("audit")} />
+          <OperationMetric active={activeTab === "audit"} label="Auditoria" value={visibleAuditLogs.length} onClick={() => selectTab("audit")} />
         ) : null}
       </section>
 
@@ -377,10 +404,10 @@ export function AdminOperations() {
           statusHistory={orderStatusHistory}
           shipments={selectedOrderShipments}
           usersById={usersById}
-          onChangeStatus={changeOrderStatus}
-          onChangeShipmentStatus={changeShipmentStatus}
-          onRegisterTracking={registerOrderTracking}
-          onCreateShipmentEvent={createShipmentEvent}
+          onChangeStatus={(status, observation) => runOperation(() => changeOrderStatus(status, observation), "No se pudo actualizar la orden.")}
+          onChangeShipmentStatus={(shipmentId, status, observation) => runOperation(() => changeShipmentStatus(shipmentId, status, observation), "No se pudo actualizar el envio.")}
+          onRegisterTracking={(courierId, trackingCode, externalShipmentCode, estimatedDeliveryAt) => runOperation(() => registerOrderTracking(courierId, trackingCode, externalShipmentCode, estimatedDeliveryAt), "No se pudo guardar el seguimiento.")}
+          onCreateShipmentEvent={(shipmentId, status, description, location, eventDate) => runOperation(() => createShipmentEvent(shipmentId, status, description, location, eventDate), "No se pudo registrar el evento.")}
           onSelectOrder={setSelectedOrderId}
         />
       ) : null}
@@ -394,13 +421,13 @@ export function AdminOperations() {
           selectedPayment={selectedPayment}
           usersById={usersById}
           canReviewPayment={canReviewSelectedPayment}
-          onReview={reviewPayment}
+          onReview={(result, observation) => runOperation(() => reviewPayment(result, observation), "No se pudo registrar la revision del pago.")}
           onSelectPayment={setSelectedPaymentId}
           token={token}
         />
       ) : null}
 
-      {activeTab === "users" && canManageUsersAndReviews ? <UsersWorkspace currentUserId={user?.id ?? ""} roles={roles} users={users} onBlockUser={blockUser} onChangeRole={changeUserRole} onUnblockUser={unblockUser} /> : null}
+      {activeTab === "users" && canManageUsersAndReviews ? <UsersWorkspace currentUserId={user?.id ?? ""} roles={roles} users={users} onBlockUser={(userId) => runOperation(() => blockUser(userId), "No se pudo bloquear el usuario.")} onChangeRole={(userId, roleId) => runOperation(() => changeUserRole(userId, roleId), "No se pudo actualizar el rol.")} onUnblockUser={(userId) => runOperation(() => unblockUser(userId), "No se pudo desbloquear el usuario.")} /> : null}
       {activeTab === "audit" && canManageUsersAndReviews ? <AuditWorkspace auditLogs={visibleAuditLogs} productsById={productsById} usersById={usersById} /> : null}
     </div>
   );
@@ -480,11 +507,22 @@ function OrdersWorkspace({
             </thead>
             <tbody>
               {orders.map((order) => (
-                <tr className="border-b border-zinc-100 hover:bg-stone-50" key={order.id}>
+                <tr
+                  aria-label={"Seleccionar orden " + shortId(order.id)}
+                  className={selectedOrder?.id === order.id ? "cursor-pointer border-b border-zinc-100 bg-stone-100" : "cursor-pointer border-b border-zinc-100 hover:bg-stone-50"}
+                  key={order.id}
+                  onClick={() => onSelectOrder(order.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onSelectOrder(order.id);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                >
                   <td className="px-5 py-4">
-                    <button className="font-semibold text-rose-800" onClick={() => onSelectOrder(order.id)} type="button">
-                      #{shortId(order.id)}
-                    </button>
+                    <span className="font-semibold text-rose-800">#{shortId(order.id)}</span>
                   </td>
                   <td className="px-5 py-4">{usersById.get(order.userId)?.email ?? shortId(order.userId)}</td>
                   <td className="px-5 py-4"><StatusBadge label={formatOrderStatus(order.status)} /></td>
@@ -819,11 +857,22 @@ function PaymentsWorkspace({
               {payments.map((payment) => {
                 const order = ordersById.get(payment.orderId);
                 return (
-                  <tr className="border-b border-zinc-100 hover:bg-stone-50" key={payment.id}>
+                  <tr
+                    aria-label={"Seleccionar pago " + shortId(payment.id)}
+                    className={selectedPayment?.id === payment.id ? "cursor-pointer border-b border-zinc-100 bg-stone-100" : "cursor-pointer border-b border-zinc-100 hover:bg-stone-50"}
+                    key={payment.id}
+                    onClick={() => onSelectPayment(payment.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onSelectPayment(payment.id);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
                     <td className="px-5 py-4">
-                      <button className="font-semibold text-rose-800" onClick={() => onSelectPayment(payment.id)} type="button">
-                        #{shortId(payment.id)}
-                      </button>
+                      <span className="font-semibold text-rose-800">#{shortId(payment.id)}</span>
                     </td>
                     <td className="px-5 py-4">{order ? usersById.get(order.userId)?.email ?? shortId(order.userId) : "Sin orden"}</td>
                     <td className="px-5 py-4"><StatusBadge label={formatPaymentStatus(payment.status)} /></td>
@@ -832,6 +881,13 @@ function PaymentsWorkspace({
                   </tr>
                 );
               })}
+              {payments.length === 0 ? (
+                <tr>
+                  <td className="px-5 py-8 text-center text-zinc-500" colSpan={5}>
+                    Aun no hay pagos registrados.
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </div>
@@ -1018,7 +1074,10 @@ function UsersWorkspace({
                     disabled={isCurrentUser || isBusy}
                     value={entry.roleId}
                     onChange={(event) => {
-                      void handleRoleChange(entry.id, event.target.value);
+                      const nextRole = roles.find((role) => role.id === event.target.value);
+                      if (event.target.value !== entry.roleId && window.confirm("Cambiar el rol de " + entry.email + " a " + (nextRole?.name ?? "el nuevo rol") + "?")) {
+                        void handleRoleChange(entry.id, event.target.value);
+                      }
                     }}
                   >
                     {roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
@@ -1031,7 +1090,11 @@ function UsersWorkspace({
                   <button
                     className="mr-2 rounded-lg border border-rose-200 px-4 py-2 text-xs font-semibold uppercase tracking-[0.1em] text-rose-800 transition hover:border-rose-800 disabled:cursor-not-allowed disabled:opacity-40"
                     disabled={isCurrentUser || isBlocked || isBusy}
-                    onClick={() => void handleBlockUser(entry.id)}
+                    onClick={() => {
+                      if (window.confirm("Bloquear a " + entry.email + "?")) {
+                        void handleBlockUser(entry.id);
+                      }
+                    }}
                     type="button"
                   >
                     {isBusy && !isBlocked ? "Procesando..." : "Bloquear"}

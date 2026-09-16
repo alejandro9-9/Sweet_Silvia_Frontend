@@ -1,5 +1,3 @@
-"use client";
-
 import { AppShell, RoleGate } from "@/components/AppShell";
 import { ProductAdmin } from "@/components/ProductAdmin";
 

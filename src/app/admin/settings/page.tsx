@@ -1,5 +1,3 @@
-"use client";
-
 import { AppShell, RoleGate } from "@/components/AppShell";
 import { AdminSettings } from "@/components/AdminSettings";
 
@@ -12,4 +10,3 @@ export default function AdminSettingsPage() {
     </RoleGate>
   );
 }
-

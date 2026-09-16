@@ -1,5 +1,3 @@
-"use client";
-
 import { AdminOperations } from "@/components/AdminOperations";
 import { AppShell, RoleGate } from "@/components/AppShell";
 

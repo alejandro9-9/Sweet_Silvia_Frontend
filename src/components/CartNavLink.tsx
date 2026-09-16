@@ -1,5 +1,3 @@
-"use client";
-
 import { Link } from "@/components/RouterLink";
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api";

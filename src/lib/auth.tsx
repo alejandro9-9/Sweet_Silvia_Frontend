@@ -1,5 +1,3 @@
-"use client";
-
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest, configureAuthRefresh } from "./api";
 import { clearCheckoutSessionStorage } from "./checkout-session";

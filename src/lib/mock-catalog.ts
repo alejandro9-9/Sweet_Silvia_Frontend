@@ -91,6 +91,16 @@ export function getMockProductImage(productName: string) {
   return "/mock-products/vestido-floral-rosa.jpg";
 }
 
+export function getStorefrontMockProductImage(productName: string) {
+  const normalizedName = productName.toLowerCase();
+
+  if (normalizedName.includes("vestido") || normalizedName.includes("floral")) {
+    return "/mock-products/vestido-floral-rosa.jpg";
+  }
+
+  return getMockProductImage(productName);
+}
+
 export function isPlaceholderImage(url: string) {
   return url.includes("placehold.co") || url.includes("placeholder");
 }

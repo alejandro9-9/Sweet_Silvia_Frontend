@@ -1,10 +1,9 @@
-"use client";
-
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { canAdminister } from "@/lib/roles";
+import { formatMoney } from "@/lib/format";
 import type {
   Category,
   Collection,
@@ -630,10 +629,6 @@ function Check({ checked, label, onChange }: { checked: boolean; label: string; 
 
 function EntityList({ items, onSelect, selectedId, title }: { items: Array<{ id: string; name: string; detail: string }>; onSelect: (id: string) => void; selectedId: string; title: string }) {
   return <div className="mt-4"><h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">{title}</h3><div className="mt-2 max-h-52 space-y-2 overflow-auto">{items.map((item) => <button className={item.id === selectedId ? "w-full rounded-lg border border-zinc-950 bg-zinc-950 p-3 text-left text-white" : "w-full rounded-lg border border-zinc-200 bg-stone-50 p-3 text-left hover:border-zinc-950"} key={item.id} onClick={() => onSelect(item.id)} type="button"><span className="block text-sm font-semibold">{item.name}</span><span className="mt-1 block text-xs opacity-70">{item.detail}</span></button>)}{items.length === 0 ? <p className="text-sm text-zinc-500">Sin registros.</p> : null}</div></div>;
-}
-
-function formatMoney(value: number, currency: string) {
-  return "S/. " + value.toFixed(2) + " " + currency;
 }
 
 function formatDate(value: string) {

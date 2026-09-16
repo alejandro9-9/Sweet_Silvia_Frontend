@@ -1,5 +1,3 @@
-"use client";
-
 import { useNavigate, useParams } from "react-router-dom";
 import { Link } from "@/components/RouterLink";
 import { useEffect, useMemo, useState } from "react";

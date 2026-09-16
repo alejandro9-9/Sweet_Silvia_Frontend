@@ -1,244 +1,42 @@
-"use client";
-
 import { useNavigate } from "react-router-dom";
 import { Link } from "@/components/RouterLink";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { BrandLogo } from "@/components/BrandLogo";
-import { apiRequest, publicAssetUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { CartNavLink } from "@/components/CartNavLink";
 import { SiteFooter } from "@/components/SiteFooter";
 import { WhatsappFloatingButton } from "@/components/WhatsappFloatingButton";
 import { canManageCatalog } from "@/lib/roles";
-import { clientEnv } from "@/lib/env";
-import type { Category, Collection, Product, ProductImage, ProductVariant } from "@/lib/types";
+import { useProductImageSource } from "@/components/useProductImageSource";
+import { useStorefrontCatalog } from "@/components/useStorefrontCatalog";
+import type { Product, ProductImage } from "@/lib/types";
 
 type StorefrontProps = {
   compact?: boolean;
 };
 
-const mockProducts: Product[] = [
-  {
-    id: "mock-blusa-satin-marfil",
-    categoryId: "10000000-0000-0000-0000-000000000001",
-    collectionId: "20000000-0000-0000-0000-000000000003",
-    name: "Blusa Satin Marfil",
-    description: "Blusa satinada de caida suave.",
-    basePrice: 119.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-falda-midi-negra",
-    categoryId: "10000000-0000-0000-0000-000000000003",
-    collectionId: "20000000-0000-0000-0000-000000000002",
-    name: "Falda Midi Negra",
-    description: "Falda midi para looks de noche.",
-    basePrice: 129.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-top-basico-crema",
-    categoryId: "10000000-0000-0000-0000-000000000001",
-    collectionId: "20000000-0000-0000-0000-000000000003",
-    name: "Top Basico Crema",
-    description: "Top versatil para combinar todos los dias.",
-    basePrice: 69.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-set-lino-verano",
-    categoryId: "10000000-0000-0000-0000-000000000001",
-    collectionId: "20000000-0000-0000-0000-000000000001",
-    name: "Set Lino Verano",
-    description: "Set fresco de lino para temporada calida.",
-    basePrice: 189.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-vestido-negro-midi",
-    categoryId: "10000000-0000-0000-0000-000000000003",
-    collectionId: "20000000-0000-0000-0000-000000000002",
-    name: "Vestido Negro Midi",
-    description: "Vestido midi elegante para noche.",
-    basePrice: 169.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-chaqueta-denim-clara",
-    categoryId: "10000000-0000-0000-0000-000000000002",
-    collectionId: "20000000-0000-0000-0000-000000000003",
-    name: "Chaqueta Denim Clara",
-    description: "Chaqueta denim liviana de uso diario.",
-    basePrice: 179.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-bolso-mini-rosa",
-    categoryId: "10000000-0000-0000-0000-000000000004",
-    collectionId: "20000000-0000-0000-0000-000000000001",
-    name: "Bolso Mini Rosa",
-    description: "Bolso compacto para completar el look.",
-    basePrice: 89.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-enterizo-verde",
-    categoryId: "10000000-0000-0000-0000-000000000003",
-    collectionId: "20000000-0000-0000-0000-000000000001",
-    name: "Enterizo Verde",
-    description: "Enterizo fluido con corte relajado.",
-    basePrice: 149.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-camisa-rayas-azul",
-    categoryId: "10000000-0000-0000-0000-000000000001",
-    collectionId: "20000000-0000-0000-0000-000000000003",
-    name: "Camisa Rayas Azul",
-    description: "Camisa fresca de manga larga.",
-    basePrice: 109.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-body-rib-caramelo",
-    categoryId: "10000000-0000-0000-0000-000000000001",
-    collectionId: "20000000-0000-0000-0000-000000000003",
-    name: "Body Rib Caramelo",
-    description: "Body acanalado de fit comodo.",
-    basePrice: 79.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-blazer-lino-arena",
-    categoryId: "10000000-0000-0000-0000-000000000001",
-    collectionId: "20000000-0000-0000-0000-000000000001",
-    name: "Blazer Lino Arena",
-    description: "Blazer ligero para elevar el look.",
-    basePrice: 219.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-cardigan-rosa-suave",
-    categoryId: "10000000-0000-0000-0000-000000000001",
-    collectionId: "20000000-0000-0000-0000-000000000002",
-    name: "Cardigan Rosa Suave",
-    description: "Cardigan tejido de tacto suave.",
-    basePrice: 139.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-pantalon-sastre-hueso",
-    categoryId: "10000000-0000-0000-0000-000000000002",
-    collectionId: "20000000-0000-0000-0000-000000000003",
-    name: "Pantalon Sastre Hueso",
-    description: "Pantalon recto para oficina o salida.",
-    basePrice: 159.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-short-denim-celeste",
-    categoryId: "10000000-0000-0000-0000-000000000002",
-    collectionId: "20000000-0000-0000-0000-000000000001",
-    name: "Short Denim Celeste",
-    description: "Short denim de tiro alto.",
-    basePrice: 99.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-vestido-largo-celeste",
-    categoryId: "10000000-0000-0000-0000-000000000003",
-    collectionId: "20000000-0000-0000-0000-000000000001",
-    name: "Vestido Largo Celeste",
-    description: "Vestido largo de movimiento ligero.",
-    basePrice: 179.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-kimono-estampado",
-    categoryId: "10000000-0000-0000-0000-000000000003",
-    collectionId: "20000000-0000-0000-0000-000000000001",
-    name: "Kimono Estampado",
-    description: "Kimono liviano para capas de verano.",
-    basePrice: 129.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-sandalias-tiras-negras",
-    categoryId: "10000000-0000-0000-0000-000000000004",
-    collectionId: "20000000-0000-0000-0000-000000000001",
-    name: "Sandalias Tiras Negras",
-    description: "Sandalias minimalistas de tiras.",
-    basePrice: 119.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-lentes-carey",
-    categoryId: "10000000-0000-0000-0000-000000000004",
-    collectionId: "20000000-0000-0000-0000-000000000003",
-    name: "Lentes Carey",
-    description: "Lentes con montura carey.",
-    basePrice: 69.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-cartera-camel",
-    categoryId: "10000000-0000-0000-0000-000000000004",
-    collectionId: "20000000-0000-0000-0000-000000000002",
-    name: "Cartera Camel",
-    description: "Cartera estructurada de uso diario.",
-    basePrice: 149.9,
-    currency: "PEN",
-    isActive: true,
-  },
-  {
-    id: "mock-vestido-slip-champagne",
-    categoryId: "10000000-0000-0000-0000-000000000003",
-    collectionId: "20000000-0000-0000-0000-000000000002",
-    name: "Vestido Slip Champagne",
-    description: "Vestido slip satinado para noche.",
-    basePrice: 189.9,
-    currency: "PEN",
-    isActive: true,
-  },
-];
-
-const useMockCatalog = clientEnv.enableMocks;
 const introVideoStorageKey = "sweet-silvia-intro-video-v3";
 type IntroVideoState = "checking" | "open" | "closed";
 
 export function Storefront({ compact = false }: StorefrontProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [collections, setCollections] = useState<Collection[]>([]);
-  const [imagesByProduct, setImagesByProduct] = useState<Record<string, ProductImage[]>>({});
-  const [categoryId, setCategoryId] = useState("");
-  const [collectionId, setCollectionId] = useState("");
-  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
-  const [message, setMessage] = useState("");
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [selectedVariants, setSelectedVariants] = useState<ProductVariant[]>([]);
-  const [isLoadingVariants, setIsLoadingVariants] = useState(false);
-  const [cartNotice, setCartNotice] = useState("");
+  const {
+    categories,
+    categoryId,
+    categoryNames,
+    catalogDescription,
+    catalogTitle,
+    collectionId,
+    collections,
+    imagesByProduct,
+    isLoadingProducts,
+    message,
+    setCategoryId,
+    setCollectionId,
+    setMessage,
+    visibleProducts,
+  } = useStorefrontCatalog();
   const [introVideoState, setIntroVideoState] = useState<IntroVideoState>(compact ? "closed" : "checking");
 
   useEffect(() => {
@@ -259,117 +57,8 @@ export function Storefront({ compact = false }: StorefrontProps) {
     return () => window.cancelAnimationFrame(frameId);
   }, [compact]);
 
-  useEffect(() => {
-    Promise.all([
-      apiRequest<Category[]>("/api/categories?onlyActive=true"),
-      apiRequest<Collection[]>("/api/collections?onlyActive=true"),
-    ])
-      .then(([nextCategories, nextCollections]) => {
-        setCategories(nextCategories);
-        setCollections(nextCollections);
-      })
-      .catch(() => setMessage("No pudimos cargar las colecciones en este momento."));
-  }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams({ onlyActive: "true" });
-    if (categoryId) {
-      params.set("categoryId", categoryId);
-    }
-    if (collectionId) {
-      params.set("collectionId", collectionId);
-    }
-
-    let isActive = true;
-    setIsLoadingProducts(true);
-    setMessage("");
-
-    async function loadProducts() {
-      try {
-        const nextProducts = await apiRequest<Product[]>(`/api/products?${params.toString()}`);
-        if (!isActive) {
-          return;
-        }
-
-        setProducts(nextProducts);
-        const entries = await Promise.all(
-          nextProducts.map(async (product) => {
-            try {
-              const images = await apiRequest<ProductImage[]>(`/api/product-images/product/${product.id}`);
-              return [product.id, images] as const;
-            } catch {
-              return [product.id, []] as const;
-            }
-          }),
-        );
-
-        if (isActive) {
-          setImagesByProduct(Object.fromEntries(entries));
-        }
-      } catch {
-        if (isActive) {
-          setProducts([]);
-          setImagesByProduct({});
-          setMessage("No pudimos cargar los productos. Intenta nuevamente en unos minutos.");
-        }
-      } finally {
-        if (isActive) {
-          setIsLoadingProducts(false);
-        }
-      }
-    }
-
-    void loadProducts();
-
-    return () => {
-      isActive = false;
-    };
-  }, [categoryId, collectionId]);
-
-  const categoryNames = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
-  const selectedCollection = useMemo(
-    () => collections.find((collection) => collection.id === collectionId) ?? null,
-    [collectionId, collections],
-  );
-  const selectedCategory = useMemo(
-    () => categories.find((category) => category.id === categoryId) ?? null,
-    [categories, categoryId],
-  );
-  const catalogTitle = selectedCategory
-    ? `${selectedCollection?.name ?? "Todo"} / ${selectedCategory.name}`
-    : selectedCollection?.name ?? "New arrivals";
-  const catalogDescription = selectedCategory?.description ?? selectedCollection?.description ?? "Piezas disponibles para explorar sin iniciar sesion.";
-  const visibleProducts = useMemo(() => {
-    const backendIds = new Set(products.map((product) => product.id));
-    const availableMocks = useMockCatalog ? mockProducts.filter((product) => !backendIds.has(product.id)) : [];
-    const allProducts = [...products, ...availableMocks];
-
-    return allProducts
-      .filter((product) => {
-        const matchesCategory = categoryId ? product.categoryId === categoryId : true;
-        const matchesCollection = collectionId ? product.collectionId === collectionId : true;
-        return matchesCategory && matchesCollection;
-      })
-      .sort(sortProductsByDisplayOrder);
-  }, [categoryId, collectionId, products]);
-
-  const selectedImages = selectedProduct ? imagesByProduct[selectedProduct.id] ?? [] : [];
-
   function openProduct(product: Product) {
-    setSelectedProduct(null);
-    setSelectedVariants([]);
-    setIsLoadingVariants(false);
-    setCartNotice("");
     navigate(`/products/${product.id}`);
-  }
-
-  function handleAddToCart() {
-    if (!user) {
-      setCartNotice("Para agregar productos al carrito necesitas iniciar sesion.");
-      return;
-    }
-
-    setCartNotice("Selecciona una talla para continuar con tu carrito.");
   }
 
   function handleCardAddToCart(product: Product) {
@@ -562,21 +251,6 @@ export function Storefront({ compact = false }: StorefrontProps) {
         )}
       </section>
 
-      {selectedProduct ? (
-        <ProductQuickView
-          categoryName={categoryNames.get(selectedProduct.categoryId)}
-          images={selectedImages}
-          isLoadingVariants={isLoadingVariants}
-          notice={cartNotice}
-          onAddToCart={handleAddToCart}
-          onClose={() => {
-            setSelectedProduct(null);
-            setCartNotice("");
-          }}
-          product={selectedProduct}
-          variants={selectedVariants}
-        />
-      ) : null}
       <SiteFooter />
       <WhatsappFloatingButton />
     </div>
@@ -630,216 +304,6 @@ function ProductCard({
       </div>
     </article>
   );
-}
-
-function ProductQuickView({
-  product,
-  images,
-  variants,
-  categoryName,
-  isLoadingVariants,
-  notice,
-  onAddToCart,
-  onClose,
-}: {
-  product: Product;
-  images: ProductImage[];
-  variants: ProductVariant[];
-  categoryName?: string;
-  isLoadingVariants: boolean;
-  notice: string;
-  onAddToCart: () => void;
-  onClose: () => void;
-}) {
-  const { imageSrc, handleImageError } = useProductImageSource(product, images);
-
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-zinc-950/50 px-4 py-8" onClick={onClose}>
-      <section
-        aria-modal="true"
-        className="grid max-h-[92vh] w-full max-w-5xl overflow-hidden bg-[#f8f5f0] shadow-2xl md:grid-cols-[0.95fr_1.05fr]"
-        onClick={(event) => event.stopPropagation()}
-        role="dialog"
-      >
-        <div className="min-h-[360px] bg-[#eee8df] md:min-h-[620px]">
-          {imageSrc ? (
-            <img alt={product.name} className="h-full w-full object-cover" onError={handleImageError} src={imageSrc} />
-          ) : (
-            <div className="grid h-full place-items-center font-serif text-3xl text-zinc-400">Sweet Silvia</div>
-          )}
-        </div>
-
-        <div className="overflow-y-auto p-6 sm:p-8">
-          <button className="ml-auto block text-sm font-semibold uppercase tracking-[0.14em] text-zinc-500" onClick={onClose}>
-            Cerrar
-          </button>
-
-          <p className="mt-6 text-xs font-semibold uppercase tracking-[0.18em] text-rose-800">{categoryName ?? "Sweet Silvia"}</p>
-          <h2 className="mt-3 font-serif text-4xl font-semibold tracking-normal">{product.name}</h2>
-          <p className="mt-3 text-lg font-semibold">
-            S/. {product.basePrice.toFixed(2)} {product.currency}
-          </p>
-          <p className="mt-5 leading-7 text-zinc-600">
-            {product.description ?? "Prenda seleccionada para completar tu look Sweet Silvia."}
-          </p>
-
-          <div className="mt-8">
-            <h3 className="text-sm font-semibold uppercase tracking-[0.14em]">Tallas disponibles</h3>
-            {isLoadingVariants ? <p className="mt-3 text-sm text-zinc-500">Cargando tallas...</p> : null}
-            {!isLoadingVariants && variants.length === 0 ? <p className="mt-3 text-sm text-zinc-500">Tallas por confirmar.</p> : null}
-            {variants.length > 0 ? (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {variants.map((variant) => (
-                  <button className="min-w-20 rounded-lg border border-zinc-300 bg-white px-4 py-3 text-left text-sm font-semibold" key={variant.id}>
-                    <span className="block">{variant.size}</span>
-                    <span className="mt-1 block text-xs font-normal text-zinc-500">{variant.color}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-
-          <button className="mt-8 w-full bg-zinc-950 px-5 py-4 text-sm font-semibold uppercase tracking-[0.14em] text-white" onClick={onAddToCart}>
-            Anadir al carrito
-          </button>
-
-          {notice ? <p className="mt-4 border border-rose-200 bg-white p-3 text-sm text-rose-800">{notice}</p> : null}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function useProductImageSource(product: Product, images: ProductImage[]) {
-  const fallbackImage = getMockProductImage(product.name);
-  const mainImage =
-    images.find((image) => image.isMain && !isPlaceholderImage(image.url)) ??
-    images.find((image) => !isPlaceholderImage(image.url)) ??
-    images.find((image) => image.isMain) ??
-    images[0];
-  const [hasImageError, setHasImageError] = useState(false);
-  const imageSrc =
-    hasImageError || !mainImage || isPlaceholderImage(mainImage.url)
-      ? fallbackImage
-      : publicAssetUrl(mainImage.url);
-
-  return {
-    imageSrc,
-    handleImageError: () => setHasImageError(true),
-  };
-}
-
-function sortProductsByDisplayOrder(firstProduct: Product, secondProduct: Product) {
-  const firstOrder = firstProduct.displayOrder ?? Number.MAX_SAFE_INTEGER;
-  const secondOrder = secondProduct.displayOrder ?? Number.MAX_SAFE_INTEGER;
-
-  return firstOrder - secondOrder || firstProduct.name.localeCompare(secondProduct.name);
-}
-
-function getMockProductImage(productName: string) {
-  const normalizedName = productName.toLowerCase();
-
-  if (normalizedName.includes("polo") || normalizedName.includes("oversize")) {
-    return "/mock-products/polo-oversize-blanco.jpg";
-  }
-
-  if (normalizedName.includes("jean") || normalizedName.includes("wide leg")) {
-    return "/mock-products/jean-wide-leg-azul.jpg";
-  }
-
-  if (normalizedName.includes("vestido") || normalizedName.includes("floral")) {
-    return "/mock-products/vestido-floral-rosa.jpg";
-  }
-
-  if (normalizedName.includes("gorra")) {
-    return "/mock-products/gorra-sweet-silvia.jpg";
-  }
-
-  if (normalizedName.includes("blusa")) {
-    return "/mock-products/blusa-satin-marfil.jpg";
-  }
-
-  if (normalizedName.includes("falda")) {
-    return "/mock-products/falda-midi-negra.jpg";
-  }
-
-  if (normalizedName.includes("top")) {
-    return "/mock-products/top-basico-crema.jpg";
-  }
-
-  if (normalizedName.includes("set")) {
-    return "/mock-products/set-lino-verano.jpg";
-  }
-
-  if (normalizedName.includes("negro")) {
-    return "/mock-products/vestido-negro-midi.jpg";
-  }
-
-  if (normalizedName.includes("chaqueta") || normalizedName.includes("denim")) {
-    return "/mock-products/chaqueta-denim-clara.jpg";
-  }
-
-  if (normalizedName.includes("bolso")) {
-    return "/mock-products/bolso-mini-rosa.jpg";
-  }
-
-  if (normalizedName.includes("enterizo")) {
-    return "/mock-products/enterizo-verde.jpg";
-  }
-
-  if (normalizedName.includes("camisa")) {
-    return "/mock-products/camisa-rayas-azul.jpg";
-  }
-
-  if (normalizedName.includes("body")) {
-    return "/mock-products/body-rib-caramelo.jpg";
-  }
-
-  if (normalizedName.includes("blazer")) {
-    return "/mock-products/blazer-lino-arena.jpg";
-  }
-
-  if (normalizedName.includes("cardigan")) {
-    return "/mock-products/cardigan-rosa-suave.jpg";
-  }
-
-  if (normalizedName.includes("pantalon") || normalizedName.includes("sastre")) {
-    return "/mock-products/pantalon-sastre-hueso.jpg";
-  }
-
-  if (normalizedName.includes("short")) {
-    return "/mock-products/short-denim-celeste.jpg";
-  }
-
-  if (normalizedName.includes("largo") || normalizedName.includes("celeste")) {
-    return "/mock-products/vestido-largo-celeste.jpg";
-  }
-
-  if (normalizedName.includes("kimono")) {
-    return "/mock-products/kimono-estampado.jpg";
-  }
-
-  if (normalizedName.includes("sandalias")) {
-    return "/mock-products/sandalias-tiras-negras.jpg";
-  }
-
-  if (normalizedName.includes("lentes")) {
-    return "/mock-products/lentes-carey.jpg";
-  }
-
-  if (normalizedName.includes("cartera")) {
-    return "/mock-products/cartera-camel.jpg";
-  }
-
-  if (normalizedName.includes("slip") || normalizedName.includes("champagne")) {
-    return "/mock-products/vestido-slip-champagne.jpg";
-  }
-
-  return "/mock-products/vestido-floral-rosa.jpg";
-}
-
-function isPlaceholderImage(url: string) {
-  return url.includes("placehold.co") || url.includes("placeholder");
 }
 
 function getAccountInitial(email?: string | null) {

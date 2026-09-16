@@ -1,7 +1,5 @@
-"use client";
-
 import { AppShell, RoleGate } from "@/components/AppShell";
-import { ProductImageUploadForm } from "@/components/UploadForms";
+import { ProductImageUploadForm } from "@/components/ProductImageUploadForm";
 
 export default function AdminUploadsPage() {
   return (

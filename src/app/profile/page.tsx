@@ -1,5 +1,3 @@
-"use client";
-
 import { Suspense } from "react";
 import { AppShell, RoleGate } from "@/components/AppShell";
 import { CustomerProfile } from "@/components/CustomerProfile";

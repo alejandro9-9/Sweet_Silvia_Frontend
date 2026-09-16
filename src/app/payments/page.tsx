@@ -1,7 +1,5 @@
-"use client";
-
 import { AppShell, RoleGate } from "@/components/AppShell";
-import { PaymentReceiptUploadForm } from "@/components/UploadForms";
+import { PaymentReceiptUploadForm } from "@/components/PaymentReceiptUploadForm";
 
 export default function PaymentsPage() {
   return (

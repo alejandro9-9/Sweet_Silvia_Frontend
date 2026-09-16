@@ -18,7 +18,10 @@ ENV VITE_IZIPAY_ENABLED=${VITE_IZIPAY_ENABLED}
 ENV VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}
 ENV VITE_WHATSAPP_PHONE=${VITE_WHATSAPP_PHONE}
 
-RUN test -n "$VITE_API_URL" && npm run build
+RUN test -n "$VITE_API_URL" \
+  && case "$VITE_API_URL" in http://*|https://*) ;; *) exit 1 ;; esac \
+  && test "$VITE_ENABLE_MOCKS" != "true" \
+  && npm run build
 
 FROM nginx:1.29-alpine AS final
 

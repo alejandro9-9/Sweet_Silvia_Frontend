@@ -11,12 +11,14 @@ docker build \
   --build-arg VITE_API_URL=https://api.sweetsilviastore.com \
   --build-arg VITE_ENABLE_MOCKS=false \
   --build-arg VITE_IZIPAY_ENABLED=false \
-  --build-arg VITE_GOOGLE_CLIENT_ID=YOUR_GOOGLE_WEB_CLIENT_ID \
+  --build-arg VITE_GOOGLE_CLIENT_ID= \
   --build-arg VITE_WHATSAPP_PHONE=51941872197 \
   -t sweet-silvia-frontend .
 ```
 
 Push the image to a private Amazon ECR repository. Rebuild it whenever one of the `VITE_` values changes.
+
+Keep `VITE_GOOGLE_CLIENT_ID` empty while `Google__Enabled=false` in the backend. Once the final HTTPS origin is registered in Google Cloud, pass the same web Client ID to this build and enable Google in the backend. Izipay remains disabled until its public notification URL and sandbox flow are ready.
 
 ## ECS Express Mode settings
 

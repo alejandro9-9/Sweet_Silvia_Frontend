@@ -75,6 +75,14 @@ export default function ProductDetailPage() {
     () => variants.find((variant) => variant.id === selectedVariantId) ?? null,
     [selectedVariantId, variants],
   );
+
+  useEffect(() => {
+    if (!selectedVariant) {
+      return;
+    }
+
+    setQuantity((currentQuantity) => Math.min(Math.max(1, currentQuantity), Math.max(1, selectedVariant.physicalStock)));
+  }, [selectedVariant]);
   const fallbackImage = product ? getMockProductImage(product.name) : null;
   const galleryImages = useMemo(() => {
     if (!product) {
@@ -161,6 +169,17 @@ export default function ProductDetailPage() {
   function addToCart() {
     if (!product || !selectedVariant) {
       setMessage("Selecciona una talla y un color antes de agregar el producto.");
+      return;
+    }
+
+    if (selectedVariant.physicalStock <= 0) {
+      setMessage("Esta variante no tiene stock disponible.");
+      return;
+    }
+
+    if (quantity > selectedVariant.physicalStock) {
+      setMessage(`Solo quedan ${selectedVariant.physicalStock} unidad${selectedVariant.physicalStock === 1 ? "" : "es"} disponibles.`);
+      setQuantity(selectedVariant.physicalStock);
       return;
     }
 
@@ -332,15 +351,15 @@ export default function ProductDetailPage() {
           <section className="mt-8 border-t border-zinc-200 pt-6">
             <div className="grid gap-4 rounded-lg bg-white p-5 shadow-sm sm:grid-cols-[140px_1fr]">
               <div className="flex h-14 items-center justify-between overflow-hidden rounded-lg border border-zinc-300 bg-[#f8f5f0]">
-                <button className="h-full px-4 text-xl" onClick={() => setQuantity((current) => Math.max(1, current - 1))} type="button">
+                <button className="h-full px-4 text-xl disabled:cursor-not-allowed disabled:text-zinc-300" disabled={quantity <= 1} onClick={() => setQuantity((current) => Math.max(1, current - 1))} type="button">
                   -
                 </button>
                 <span className="text-sm font-semibold">{quantity}</span>
-                <button className="h-full px-4 text-xl" onClick={() => setQuantity((current) => current + 1)} type="button">
+                <button className="h-full px-4 text-xl disabled:cursor-not-allowed disabled:text-zinc-300" disabled={!selectedVariant || quantity >= selectedVariant.physicalStock} onClick={() => setQuantity((current) => current + 1)} type="button">
                   +
                 </button>
               </div>
-              <button className="inline-flex h-14 items-center justify-center gap-3 rounded-lg bg-zinc-950 px-6 text-sm font-semibold uppercase tracking-[0.14em] text-white transition hover:bg-rose-900" onClick={addToCart} type="button">
+              <button className="inline-flex h-14 items-center justify-center gap-3 rounded-lg bg-zinc-950 px-6 text-sm font-semibold uppercase tracking-[0.14em] text-white transition hover:bg-rose-900 disabled:cursor-not-allowed disabled:bg-zinc-400" disabled={!selectedVariant || selectedVariant.physicalStock <= 0} onClick={addToCart} type="button">
                 <ShoppingBagIcon />
                 Agregar al carrito
               </button>

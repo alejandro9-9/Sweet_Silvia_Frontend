@@ -18,6 +18,8 @@ export function AdminOperations() {
   const canManageUsersAndReviews = canAdminister(user?.role);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get("tab") as AdminTab | null;
+  const requestedFilter = searchParams.get("filter");
+  const requestedOrderFilter = requestedTab === "orders" && (requestedFilter === "prepare" || requestedFilter === "shipping") ? requestedFilter : null;
   const requestedTabIsAvailable = requestedTab === "orders" || requestedTab === "payments" ||
     (canManageUsersAndReviews && (requestedTab === "users" || requestedTab === "audit"));
   const [activeTab, setActiveTab] = useState<AdminTab>(requestedTabIsAvailable ? (requestedTab as AdminTab) : "orders");
@@ -28,9 +30,12 @@ export function AdminOperations() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState("");
+  const [showOnlyOrdersToPrepare, setShowOnlyOrdersToPrepare] = useState(requestedOrderFilter === "prepare");
+  const [showOnlyPendingShipments, setShowOnlyPendingShipments] = useState(requestedOrderFilter === "shipping");
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
   const [orderStatusHistory, setOrderStatusHistory] = useState<OrderStatusHistory[]>([]);
   const [selectedPaymentId, setSelectedPaymentId] = useState("");
+  const [showOnlyPendingPayments, setShowOnlyPendingPayments] = useState(false);
   const [receipts, setReceipts] = useState<PaymentReceipt[]>([]);
   const [reviews, setReviews] = useState<PaymentReview[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
@@ -40,8 +45,10 @@ export function AdminOperations() {
   const [isLoading, setIsLoading] = useState(true);
 
   const operationalOrders = orders;
-  const selectedOrder = operationalOrders.find((order) => order.id === selectedOrderId) ?? operationalOrders[0] ?? null;
-  const selectedPayment = payments.find((payment) => payment.id === selectedPaymentId) ?? payments[0] ?? null;
+  const ordersToPrepare = operationalOrders.filter((order) => order.status === "paid");
+  const pendingShipmentOrders = operationalOrders.filter((order) => order.status === "preparing");
+  const visibleOperationalOrders = showOnlyOrdersToPrepare ? ordersToPrepare : showOnlyPendingShipments ? pendingShipmentOrders : operationalOrders;
+  const selectedOrder = visibleOperationalOrders.find((order) => order.id === selectedOrderId) ?? visibleOperationalOrders[0] ?? null;
   const usersById = useMemo(() => new Map(users.map((entry) => [entry.id, entry])), [users]);
   const ordersById = useMemo(() => new Map(orders.map((entry) => [entry.id, entry])), [orders]);
   const productsById = useMemo(() => new Map(products.map((entry) => [entry.id, entry])), [products]);
@@ -49,18 +56,32 @@ export function AdminOperations() {
   const selectedOrderShipments = selectedOrder ? shipmentsByOrder[selectedOrder.id] ?? [] : [];
   const cashPaymentMethodIds = useMemo(() => new Set(paymentMethods.filter((method) => method.type === "cash").map((method) => method.id)), [paymentMethods]);
   const pendingPayments = payments.filter((payment) => payment.status === "inReview" || (payment.status === "pendingReceipt" && cashPaymentMethodIds.has(payment.paymentMethodId)));
+  const visiblePayments = showOnlyPendingPayments ? pendingPayments : payments;
+  const selectedPayment = visiblePayments.find((payment) => payment.id === selectedPaymentId) ?? visiblePayments[0] ?? null;
   const canReviewSelectedPayment = canManageUsersAndReviews && selectedPayment !== null &&
     (selectedPayment.status === "inReview" || (selectedPayment.status === "pendingReceipt" && cashPaymentMethodIds.has(selectedPayment.paymentMethodId)));
 
   useEffect(() => {
     setActiveTab(requestedTabIsAvailable ? (requestedTab as AdminTab) : "orders");
-  }, [requestedTab, requestedTabIsAvailable]);
+    setShowOnlyOrdersToPrepare(requestedOrderFilter === "prepare");
+    setShowOnlyPendingShipments(requestedOrderFilter === "shipping");
+  }, [requestedOrderFilter, requestedTab, requestedTabIsAvailable]);
 
   function selectTab(tab: AdminTab) {
     setActiveTab(tab);
+    if (tab !== "payments") {
+      setShowOnlyPendingPayments(false);
+    }
+    if (tab !== "orders") {
+      setShowOnlyOrdersToPrepare(false);
+      setShowOnlyPendingShipments(false);
+    }
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.set("tab", tab);
+      if (tab !== "orders") {
+        next.delete("filter");
+      }
       return next;
     }, { replace: true });
   }
@@ -224,11 +245,13 @@ export function AdminOperations() {
     return nextShipments;
   }
 
-  async function registerOrderTracking(courierId: string, trackingCode: string, externalShipmentCode: string, estimatedDeliveryAt: string) {
+  async function registerOrderTracking(courierId: string, trackingCode: string, externalShipmentCode: string, estimatedDeliveryAt: string, observation: string) {
     if (!selectedOrder) {
       return;
     }
 
+    const courier = couriers.find((entry) => entry.id === courierId);
+    const isOlvaCourier = courier?.name.toLocaleLowerCase("es-PE").includes("olva") ?? false;
     let shipment = selectedOrderShipments[0] ?? null;
     if (!shipment) {
       const shipmentResponse = await apiRequest<{ id: string }>("/api/shipments", {
@@ -238,6 +261,7 @@ export function AdminOperations() {
           courierId,
           shippingCost: selectedOrder.shippingCost,
           currency: selectedOrder.currency,
+          observation: isOlvaCourier ? null : observation.trim() || null,
         },
         token,
       });
@@ -247,6 +271,19 @@ export function AdminOperations() {
 
     if (!shipment) {
       setMessage("No se pudo preparar el envio para esta orden.");
+      return;
+    }
+
+    if (!isOlvaCourier) {
+      if (observation.trim()) {
+        await apiRequest<void>(`/api/shipments/${shipment.id}/status`, {
+          method: "PATCH",
+          body: { status: shipment.status, observation: observation.trim() },
+          token,
+        });
+      }
+      await refreshOrderShipments(selectedOrder.id);
+      setMessage("Envio guardado con la observacion registrada.");
       return;
     }
 
@@ -343,18 +380,42 @@ export function AdminOperations() {
 
   function openPaymentsTab(preferPending = false) {
     selectTab("payments");
+    setShowOnlyPendingPayments(preferPending);
     if (preferPending) {
       setSelectedPaymentId(pendingPayments[0]?.id ?? payments[0]?.id ?? "");
     }
   }
 
+  function openOrdersTab(filter: "prepare" | "shipping" | null = null) {
+    setActiveTab("orders");
+    setShowOnlyOrdersToPrepare(filter === "prepare");
+    setShowOnlyPendingShipments(filter === "shipping");
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("tab", "orders");
+      if (filter) {
+        next.set("filter", filter);
+      } else {
+        next.delete("filter");
+      }
+      return next;
+    }, { replace: true });
+    if (filter === "prepare") {
+      setSelectedOrderId(ordersToPrepare[0]?.id ?? operationalOrders[0]?.id ?? "");
+    } else if (filter === "shipping") {
+      setSelectedOrderId(pendingShipmentOrders[0]?.id ?? operationalOrders[0]?.id ?? "");
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <section className="grid gap-4 md:grid-cols-5">
+      <section className="grid gap-4 md:grid-cols-3 xl:grid-cols-7">
         {canManageUsersAndReviews ? <OperationMetric active={activeTab === "users"} label="Usuarios" value={users.length} onClick={() => selectTab("users")} /> : null}
-        <OperationMetric active={activeTab === "orders"} label="Ordenes" value={operationalOrders.length} onClick={() => selectTab("orders")} />
-        <OperationMetric active={activeTab === "payments"} label="Pagos" value={payments.length} onClick={() => openPaymentsTab()} />
-        <OperationMetric active={activeTab === "payments" && pendingPayments.length > 0} label={canManageUsersAndReviews ? "Por revisar" : "Pendientes"} value={pendingPayments.length} tone="rose" onClick={() => openPaymentsTab(true)} />
+        <OperationMetric active={activeTab === "orders" && !showOnlyOrdersToPrepare && !showOnlyPendingShipments} label="Ordenes" value={operationalOrders.length} onClick={() => openOrdersTab()} />
+        <OperationMetric active={activeTab === "orders" && showOnlyOrdersToPrepare} label="Preparar pedidos" value={ordersToPrepare.length} tone="rose" onClick={() => openOrdersTab("prepare")} />
+        <OperationMetric active={activeTab === "orders" && showOnlyPendingShipments} label="Pendiente de envio" value={pendingShipmentOrders.length} tone="rose" onClick={() => openOrdersTab("shipping")} />
+        <OperationMetric active={activeTab === "payments" && !showOnlyPendingPayments} label="Pagos" value={payments.length} onClick={() => openPaymentsTab()} />
+        <OperationMetric active={activeTab === "payments" && showOnlyPendingPayments} label={canManageUsersAndReviews ? "Por revisar" : "Pendientes"} value={pendingPayments.length} tone="rose" onClick={() => openPaymentsTab(true)} />
         {canManageUsersAndReviews ? (
           <OperationMetric active={activeTab === "audit"} label="Auditoria" value={visibleAuditLogs.length} onClick={() => selectTab("audit")} />
         ) : null}
@@ -367,14 +428,16 @@ export function AdminOperations() {
         <OrdersWorkspace
           couriers={couriers}
           orderItems={orderItems}
-          orders={operationalOrders}
+          payments={payments}
+          orders={visibleOperationalOrders}
           selectedOrder={selectedOrder}
           statusHistory={orderStatusHistory}
           shipments={selectedOrderShipments}
           usersById={usersById}
+          token={token}
           onChangeStatus={(status, observation) => runOperation(() => changeOrderStatus(status, observation), "No se pudo actualizar la orden.")}
           onChangeShipmentStatus={(shipmentId, status, observation) => runOperation(() => changeShipmentStatus(shipmentId, status, observation), "No se pudo actualizar el envio.")}
-          onRegisterTracking={(courierId, trackingCode, externalShipmentCode, estimatedDeliveryAt) => runOperation(() => registerOrderTracking(courierId, trackingCode, externalShipmentCode, estimatedDeliveryAt), "No se pudo guardar el seguimiento.")}
+          onRegisterTracking={(courierId, trackingCode, externalShipmentCode, estimatedDeliveryAt, observation) => runOperation(() => registerOrderTracking(courierId, trackingCode, externalShipmentCode, estimatedDeliveryAt, observation), "No se pudo guardar el seguimiento.")}
           onCreateShipmentEvent={(shipmentId, status, description, location, eventDate) => runOperation(() => createShipmentEvent(shipmentId, status, description, location, eventDate), "No se pudo registrar el evento.")}
           onSelectOrder={setSelectedOrderId}
         />
@@ -383,7 +446,7 @@ export function AdminOperations() {
       {activeTab === "payments" ? (
         <PaymentsWorkspace
           ordersById={ordersById}
-          payments={payments}
+          payments={visiblePayments}
           receipts={receipts}
           reviews={reviews}
           selectedPayment={selectedPayment}

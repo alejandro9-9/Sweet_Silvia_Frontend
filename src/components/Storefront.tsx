@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { BrandLogo } from "@/components/BrandLogo";
 import { useAuth } from "@/lib/auth";
 import { CartNavLink } from "@/components/CartNavLink";
+import { CustomerPaymentStatusIcon } from "@/components/CustomerPaymentStatusIcon";
 import { SiteFooter } from "@/components/SiteFooter";
 import { WhatsappFloatingButton } from "@/components/WhatsappFloatingButton";
 import { canManageCatalog } from "@/lib/roles";
@@ -15,11 +16,13 @@ type StorefrontProps = {
   compact?: boolean;
 };
 
-const introVideoStorageKey = "sweet-silvia-intro-video-v3";
+// La bienvenida se muestra una vez por sesion del navegador. La version nueva
+// invalida las marcas persistentes de pruebas anteriores en localStorage.
+const introVideoStorageKey = "sweet-silvia-intro-video-session-v1";
 type IntroVideoState = "checking" | "open" | "closed";
 
 export function Storefront({ compact = false }: StorefrontProps) {
-  const { user } = useAuth();
+  const { token, user } = useAuth();
   const navigate = useNavigate();
   const {
     categories,
@@ -47,7 +50,7 @@ export function Storefront({ compact = false }: StorefrontProps) {
     const frameId = window.requestAnimationFrame(() => {
       let hasSeenIntro = false;
       try {
-        hasSeenIntro = window.localStorage.getItem(introVideoStorageKey) === "true";
+        hasSeenIntro = window.sessionStorage.getItem(introVideoStorageKey) === "true";
       } catch {
         hasSeenIntro = false;
       }
@@ -66,25 +69,29 @@ export function Storefront({ compact = false }: StorefrontProps) {
     openProduct(product);
   }
 
-  function finishIntro() {
+  function markIntroAsSeen() {
     try {
-      window.localStorage.setItem(introVideoStorageKey, "true");
+      window.sessionStorage.setItem(introVideoStorageKey, "true");
     } catch {
       // La bienvenida igual puede cerrarse si el navegador bloquea el almacenamiento.
     }
+  }
+
+  function finishIntro() {
+    markIntroAsSeen();
     setIntroVideoState("closed");
   }
 
   function skipIntro() {
+    markIntroAsSeen();
     setIntroVideoState("closed");
-    navigate("/");
   }
 
   return (
     <div className="min-h-screen bg-[#f8f5f0] text-zinc-950">
       {!compact && introVideoState === "checking" ? <div aria-hidden="true" className="fixed inset-0 z-50 bg-zinc-950" /> : null}
       {!compact && introVideoState === "open" ? (
-        <section aria-label="Presentacion de Sweet Silvia" className="fixed inset-0 z-50 overflow-hidden bg-zinc-950 text-white">
+        <section aria-label="Presentacion de Sweet Silvia" aria-modal="true" className="fixed inset-0 z-50 overflow-hidden bg-zinc-950 text-white" role="dialog">
           <video
             autoPlay
             className="absolute inset-0 h-full w-full object-contain"
@@ -118,17 +125,17 @@ export function Storefront({ compact = false }: StorefrontProps) {
       </div>
 
       <header className="sticky top-0 z-10 border-b border-zinc-200 bg-[#f8f5f0]/95 backdrop-blur">
-        <div className="mx-auto flex min-h-20 max-w-7xl flex-wrap items-center justify-between gap-4 px-4 sm:px-6">
-          <nav className="flex flex-wrap items-center gap-5 text-sm font-semibold uppercase tracking-[0.12em]">
+        <div className="mx-auto grid min-h-20 max-w-7xl grid-cols-[1fr_auto] grid-rows-[auto_auto] items-center gap-x-3 gap-y-2 px-3 py-2 sm:grid-cols-[1fr_auto_1fr] sm:grid-rows-1 sm:gap-4 sm:px-6 sm:py-0">
+          <nav className="col-start-1 row-start-2 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.1em] sm:col-start-1 sm:row-start-1 sm:gap-5 sm:text-sm sm:tracking-[0.12em]">
             <Link href="/">Inicio</Link>
-            <Link href="/catalog">Catalogo</Link>
+            <a href="#productos">Catalogo</a>
           </nav>
 
-          <Link aria-label="Ir al inicio de Sweet Silvia" href="/">
-            <BrandLogo className="w-40 sm:w-44" priority />
+          <Link aria-label="Ir al inicio de Sweet Silvia" className="col-span-2 row-start-1 justify-self-center sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:justify-self-center" href="/">
+            <BrandLogo className="w-32 sm:w-44" priority />
           </Link>
 
-          <div className="flex items-center gap-4 text-sm font-semibold uppercase tracking-[0.12em]">
+          <div className="col-start-2 row-start-2 flex items-center justify-self-end gap-2 text-sm font-semibold uppercase tracking-[0.12em] sm:col-start-3 sm:row-start-1 sm:gap-4">
             {user ? (
               <Link
                 className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white/85 px-3 py-2 text-xs normal-case tracking-normal shadow-sm transition hover:border-rose-200 hover:bg-rose-50"
@@ -139,13 +146,14 @@ export function Storefront({ compact = false }: StorefrontProps) {
                   {getAccountInitial(user.email)}
                 </span>
                 <span className="hidden max-w-44 truncate text-left leading-tight sm:block">
-                  <span className="block text-[11px] uppercase tracking-[0.12em] text-zinc-500">{user.role}</span>
+                  <span className="block text-[11px] uppercase tracking-[0.12em] text-zinc-500">{user.role === "Cliente" ? "Sweet Reina" : user.role}</span>
                   <span className="block truncate text-zinc-950">{user.email}</span>
                 </span>
               </Link>
             ) : (
               <Link href="/login">Ingresar</Link>
             )}
+            {user?.role === "Cliente" ? <CustomerPaymentStatusIcon token={token} /> : null}
             <CartNavLink />
           </div>
         </div>
@@ -197,7 +205,7 @@ export function Storefront({ compact = false }: StorefrontProps) {
         </div>
       </section>
 
-      <section id="productos" className="mx-auto max-w-7xl px-4 pb-16 sm:px-6">
+      <section className="mx-auto max-w-7xl scroll-mt-24 px-4 pb-16 sm:px-6" id="productos">
         <div className="mb-7 flex flex-col gap-5 border-t border-zinc-200 pt-6 md:flex-row md:items-end md:justify-between">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-800">Seleccion actual</p>

@@ -23,6 +23,7 @@ export default function App() {
           <Route element={<CatalogPage />} path="/catalog" />
           <Route element={<ProductDetailPage />} path="/products/:id" />
           <Route element={<CartPage />} path="/cart" />
+          <Route element={<CartPage checkoutOnly />} path="/checkout" />
           <Route element={<LoginPage />} path="/login" />
           <Route element={<TermsAndConditionsPage />} path="/terms-and-conditions" />
           <Route element={<PrivacyPolicyPage />} path="/privacy-policy" />

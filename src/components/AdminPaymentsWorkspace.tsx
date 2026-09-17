@@ -47,10 +47,11 @@ export function PaymentsWorkspace({
             <tbody>
               {payments.map((payment) => {
                 const order = ordersById.get(payment.orderId);
+                const needsAttention = payment.status === "inReview";
                 return (
                   <tr
                     aria-label={"Seleccionar pago " + shortId(payment.id)}
-                    className={selectedPayment?.id === payment.id ? "cursor-pointer border-b border-zinc-100 bg-stone-100" : "cursor-pointer border-b border-zinc-100 hover:bg-stone-50"}
+                    className={`${selectedPayment?.id === payment.id ? "bg-stone-100" : needsAttention ? "bg-rose-50/20 hover:bg-rose-50/50" : "hover:bg-stone-50"} cursor-pointer border-b border-zinc-100 ${needsAttention ? "border-l-4 border-l-rose-500" : "border-l-0"}`}
                     key={payment.id}
                     onClick={() => onSelectPayment(payment.id)}
                     onKeyDown={(event) => {
@@ -62,13 +63,13 @@ export function PaymentsWorkspace({
                     role="button"
                     tabIndex={0}
                   >
-                    <td className="px-5 py-4">
+                    <td className={`px-5 py-4 ${needsAttention ? "font-bold text-rose-900" : ""}`}>
                       <span className="font-semibold text-rose-800">#{shortId(payment.id)}</span>
                     </td>
-                    <td className="px-5 py-4">{order ? usersById.get(order.userId)?.email ?? shortId(order.userId) : "Sin orden"}</td>
-                    <td className="px-5 py-4"><StatusBadge label={formatPaymentStatus(payment.status)} /></td>
-                    <td className="px-5 py-4 font-semibold">{formatMoney(payment.amount, payment.currency)}</td>
-                    <td className="px-5 py-4 text-zinc-500">{payment.receiptUploadedAt ? formatDate(payment.receiptUploadedAt) : "Pendiente"}</td>
+                    <td className={`px-5 py-4 ${needsAttention ? "font-bold text-rose-900" : ""}`}>{order ? usersById.get(order.userId)?.email ?? shortId(order.userId) : "Sin orden"}</td>
+                    <td className="px-5 py-4"><StatusBadge attention={needsAttention} label={formatPaymentStatus(payment.status)} /></td>
+                    <td className={`px-5 py-4 font-semibold ${needsAttention ? "font-bold text-rose-900" : ""}`}>{formatMoney(payment.amount, payment.currency)}</td>
+                    <td className={`px-5 py-4 ${needsAttention ? "font-semibold text-rose-800" : "text-zinc-500"}`}>{payment.receiptUploadedAt ? formatDate(payment.receiptUploadedAt) : "Pendiente"}</td>
                   </tr>
                 );
               })}
@@ -141,14 +142,14 @@ function PaymentDetail({
             <div className="mt-3 space-y-3">
               {receipts.length === 0 ? <p className="rounded-lg border border-dashed border-zinc-300 p-3 text-sm text-zinc-500">Sin comprobantes cargados.</p> : null}
               {receipts.map((receipt) => (
-                <div key={receipt.id}>
+                <div className="min-w-0 overflow-hidden rounded-lg border border-zinc-200 bg-stone-50" key={receipt.id}>
                   <PrivateFileLink
-                    className="block rounded-lg border border-zinc-200 bg-stone-50 p-3 text-sm hover:border-zinc-950"
+                    className="p-3 text-sm hover:bg-white"
                     label={`Operacion ${receipt.operationCode ?? "sin codigo"}`}
                     path={`/api/payment-receipts/${receipt.id}/file`}
                     token={token}
                   />
-                  <p className="-mt-2 px-3 text-xs text-zinc-500">{receipt.declaredAmount ? formatMoney(receipt.declaredAmount, receipt.currency ?? payment.currency) : "Monto no declarado"}</p>
+                  <p className="border-t border-zinc-200 px-3 py-2 text-xs leading-5 text-zinc-500 break-words">{receipt.declaredAmount ? formatMoney(receipt.declaredAmount, receipt.currency ?? payment.currency) : "Monto no declarado"}</p>
                 </div>
               ))}
             </div>
@@ -196,8 +197,6 @@ function SummaryRow({ label, value, strong = false }: { label: string; value: st
   return <div className={strong ? "flex justify-between font-semibold" : "flex justify-between text-zinc-600"}><span>{label}</span><span>{value}</span></div>;
 }
 
-function StatusBadge({ label }: { label: string }) {
-  return <span className="inline-flex rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.08em] text-zinc-700">{label}</span>;
+function StatusBadge({ attention = false, label }: { attention?: boolean; label: string }) {
+  return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.08em] ${attention ? "bg-rose-100 text-rose-800" : "bg-stone-100 text-zinc-700"}`}>{label}</span>;
 }
-
-

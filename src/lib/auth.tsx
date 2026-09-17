@@ -165,6 +165,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         method: "POST",
         token,
       });
+    } catch {
+      // La sesion local se limpia aunque el servidor no responda.
     } finally {
       clearCheckoutSessionStorage();
       persistToken(null);

@@ -1,7 +1,10 @@
 import { AppShell, RoleGate } from "@/components/AppShell";
 import { PaymentReceiptUploadForm } from "@/components/PaymentReceiptUploadForm";
+import { useSearchParams } from "react-router-dom";
 
 export default function PaymentsPage() {
+  const [searchParams] = useSearchParams();
+
   return (
     <RoleGate allowedRoles={["Cliente"]}>
       <AppShell>
@@ -11,7 +14,7 @@ export default function PaymentsPage() {
             Adjunta tu comprobante seleccionando una orden abierta.
           </p>
         </section>
-        <PaymentReceiptUploadForm />
+        <PaymentReceiptUploadForm initialPaymentId={searchParams.get("paymentId") ?? undefined} />
       </AppShell>
     </RoleGate>
   );

@@ -47,11 +47,11 @@ export function PrivateFileLink({ path, token, label, className = "" }: PrivateF
   }
 
   return (
-    <span className={className}>
-      <button className="w-full text-left" disabled={isLoading} onClick={() => void openFile()} type="button">
-        <span className="font-semibold">{isLoading ? "Abriendo comprobante..." : label}</span>
+    <div className={`block min-w-0 max-w-full ${className}`}>
+      <button className="block w-full min-w-0 max-w-full text-left" disabled={isLoading} onClick={() => void openFile()} type="button">
+        <span className="block min-w-0 truncate font-semibold">{isLoading ? "Abriendo comprobante..." : label}</span>
       </button>
       {message ? <span className="mt-2 block text-xs text-rose-800">{message}</span> : null}
-    </span>
+    </div>
   );
 }

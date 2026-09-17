@@ -9,6 +9,7 @@ export type GuestCartItem = {
   size: string;
   color: string;
   quantity: number;
+  availableStock: number | null;
   unitPrice: number;
   currency: string;
   imageUrl: string | null;
@@ -52,7 +53,8 @@ export function addGuestCartItem(item: Omit<GuestCartItem, "id">) {
       index === existingIndex
         ? {
             ...cartItem,
-            quantity: cartItem.quantity + item.quantity,
+            quantity: Math.min(cartItem.quantity + item.quantity, item.availableStock ?? 99),
+            availableStock: item.availableStock ?? cartItem.availableStock,
           }
         : cartItem,
     );
@@ -73,7 +75,7 @@ export function addGuestCartItem(item: Omit<GuestCartItem, "id">) {
 
 export function updateGuestCartItemQuantity(itemId: string, quantity: number) {
   const nextItems = readGuestCart()
-    .map((item) => (item.id === itemId ? { ...item, quantity } : item))
+    .map((item) => item.id === itemId ? { ...item, quantity: Math.min(quantity, item.availableStock ?? 99) } : item)
     .filter((item) => item.quantity > 0);
   writeGuestCart(nextItems);
   return nextItems;
@@ -105,6 +107,7 @@ export function toGuestCartItem({
     size: variant?.size ?? "Talla unica",
     color: variant?.color ?? "Color unico",
     quantity,
+    availableStock: variant?.physicalStock ?? null,
     unitPrice,
     currency: getVariantEffectiveCurrency(product, variant),
     imageUrl: imageUrl ?? null,
@@ -130,7 +133,8 @@ function normalizeGuestCartItem(item: GuestCartItem): GuestCartItem | null {
 
   return {
     ...item,
-    quantity,
+    quantity: Math.min(quantity, item.availableStock ?? 99),
+    availableStock: item.availableStock == null ? null : Math.max(0, Math.floor(item.availableStock)),
     unitPrice,
     currency: item.currency || "PEN",
     size: item.size || "Talla unica",

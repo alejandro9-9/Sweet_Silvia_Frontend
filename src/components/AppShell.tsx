@@ -6,6 +6,9 @@ import { SiteFooter } from "@/components/SiteFooter";
 import { useAuth } from "@/lib/auth";
 import { canAdminister, canManageCatalog, canUploadPaymentReceipts } from "@/lib/roles";
 import type { ApiRole } from "@/lib/types";
+import { CustomerPaymentStatusIcon } from "@/components/CustomerPaymentStatusIcon";
+import { CartNavLink } from "@/components/CartNavLink";
+import { AdminPendingActionsIcon } from "@/components/AdminPendingActionsIcon";
 
 const adminLinks = [
   { href: "/dashboard", label: "Panel", roles: ["Administrador", "Asistente"] as ApiRole[] },
@@ -24,7 +27,7 @@ const customerLinks = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { token, user, logout } = useAuth();
   const isAdminArea = pathname.startsWith("/admin") || (pathname === "/dashboard" && Boolean(user && canManageCatalog(user.role)));
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const visibleLinks = user && canManageCatalog(user.role)
@@ -66,7 +69,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-3">
             {user ? (
               user.role === "Cliente" ? (
-                <div className="relative">
+                <div className="flex items-center gap-2">
+                  <div className="relative">
                   <button
                     aria-expanded={isAccountMenuOpen}
                     className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold shadow-sm transition hover:border-rose-300 hover:bg-rose-50"
@@ -79,14 +83,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </span>
                     <span className="hidden max-w-52 text-left leading-tight sm:block">
                       <span className="block truncate">{user.email}</span>
-                      <span className="block text-xs font-medium text-zinc-500">{user.role}</span>
+                      <span className="block text-xs font-medium text-zinc-500">Sweet Reina</span>
                     </span>
                   </button>
                   {isAccountMenuOpen ? (
                     <div className="absolute right-0 z-20 mt-3 w-72 rounded-2xl border border-zinc-200 bg-white p-4 shadow-xl">
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-rose-700">Sweet Silvia</p>
                       <p className="mt-2 truncate text-sm font-semibold">{user.email}</p>
-                      <p className="text-xs text-zinc-500">Cliente</p>
+                      <p className="text-xs text-zinc-500">Sweet Reina</p>
                       <div className="mt-4 grid gap-1 border-y border-zinc-100 py-3">
                         <AccountMenuLink href="/profile" label="Perfil y pedidos" onClick={() => setIsAccountMenuOpen(false)} />
                         <AccountMenuLink href="/profile?section=receipts" label="Comprobantes" onClick={() => setIsAccountMenuOpen(false)} />
@@ -97,9 +101,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       </button>
                     </div>
                   ) : null}
+                  </div>
+                  <CustomerPaymentStatusIcon token={token} />
+                  <CartNavLink />
                 </div>
               ) : (
                 <>
+                  {canManageCatalog(user.role) ? <AdminPendingActionsIcon token={token} /> : null}
                   <div className="hidden text-right text-sm sm:block">
                     <p className="font-medium">{user.email}</p>
                     <p className="text-zinc-500">{user.role}</p>

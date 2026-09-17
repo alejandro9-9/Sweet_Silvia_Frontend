@@ -149,17 +149,61 @@ type ReceiptsPanelProps = {
   onReceiptUploaded: () => void;
 };
 
+type ReceiptFilter = "pendingReceipt" | "inReview" | "approved" | "rejected";
+
+const receiptFilters: { id: ReceiptFilter; label: string }[] = [
+  { id: "pendingReceipt", label: "Pendientes" },
+  { id: "inReview", label: "En revision" },
+  { id: "approved", label: "Aprobados" },
+  { id: "rejected", label: "Rechazados" },
+];
+
 export function ReceiptsPanel({ orders, paymentsByOrder, receiptsByPayment, token, onReceiptUploaded }: ReceiptsPanelProps) {
   const orderById = useMemo(() => new Map(orders.map((order) => [order.id, order])), [orders]);
   const payments = orders.flatMap((order) => paymentsByOrder[order.id] ?? []);
+  const [activeFilter, setActiveFilter] = useState<ReceiptFilter>("pendingReceipt");
   const editablePayments = payments.filter((payment) => isPaymentEditableByCustomer(payment, orderById.get(payment.orderId)));
+  const filteredPayments = payments.filter((payment) => payment.status === activeFilter);
+  const counts = useMemo(
+    () => Object.fromEntries(receiptFilters.map((filter) => [filter.id, payments.filter((payment) => payment.status === filter.id).length])) as Record<ReceiptFilter, number>,
+    [payments],
+  );
+  const activeFilterLabel = receiptFilters.find((filter) => filter.id === activeFilter)?.label ?? "Comprobantes";
 
   return (
-    <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_420px]">
-      <div className="space-y-4">
+    <section className="grid min-w-0 gap-6 lg:grid-cols-[210px_minmax(0,1fr)_280px]">
+      <aside className="h-fit rounded-2xl border border-rose-100 bg-white p-3 shadow-sm lg:sticky lg:top-6">
+        <div className="px-3 py-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-700">Comprobantes</p>
+          <h2 className="mt-1 text-lg font-semibold">Estado</h2>
+        </div>
+        <nav aria-label="Filtrar comprobantes" className="mt-2 flex gap-2 overflow-x-auto lg:grid lg:overflow-visible">
+          {receiptFilters.map((filter) => (
+            <button
+              className={`flex min-w-max items-center justify-between gap-4 rounded-xl px-3 py-3 text-left text-sm font-semibold transition lg:w-full ${activeFilter === filter.id ? "bg-zinc-950 text-white" : "text-zinc-600 hover:bg-rose-50 hover:text-rose-800"}`}
+              key={filter.id}
+              onClick={() => setActiveFilter(filter.id)}
+              type="button"
+            >
+              <span>{filter.label}</span>
+              <span className={`rounded-full px-2 py-0.5 text-xs ${activeFilter === filter.id ? "bg-white/15 text-white" : "bg-stone-100 text-zinc-500"}`}>{counts[filter.id]}</span>
+            </button>
+          ))}
+        </nav>
+      </aside>
+
+      <div className="min-w-0 space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-700">Bandeja de comprobantes</p>
+            <h2 className="mt-1 text-2xl font-semibold">{activeFilterLabel}</h2>
+          </div>
+          <p className="text-sm text-zinc-500">{filteredPayments.length} comprobante{filteredPayments.length === 1 ? "" : "s"}</p>
+        </div>
         {payments.length === 0 ? <EmptyState title="Sin pagos registrados" text="Cuando elijas un metodo de pago, el comprobante aparecera en esta seccion." /> : null}
-        {payments.map((payment) => (
-          <article className="rounded-2xl border border-rose-100 bg-white p-5 shadow-sm" key={payment.id}>
+        {payments.length > 0 && filteredPayments.length === 0 ? <EmptyState title={`Sin comprobantes ${activeFilterLabel.toLocaleLowerCase("es-PE")}`} text="Prueba con otro estado para consultar tus comprobantes." /> : null}
+        {filteredPayments.map((payment) => (
+          <article className="min-w-0 overflow-hidden rounded-2xl border border-rose-100 bg-white p-5 shadow-sm" key={payment.id}>
             <div className="flex flex-wrap justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-rose-700">Orden #{shortId(payment.orderId)}</p>
@@ -171,9 +215,11 @@ export function ReceiptsPanel({ orders, paymentsByOrder, receiptsByPayment, toke
             <div className="mt-4 grid gap-3">
               {(receiptsByPayment[payment.id] ?? []).length === 0 ? <p className="rounded-xl border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">Aun no adjuntaste comprobante.</p> : null}
               {(receiptsByPayment[payment.id] ?? []).map((receipt) => (
-                <div key={receipt.id}>
-                  <PrivateFileLink className="rounded-xl border border-zinc-200 p-4 text-sm hover:border-rose-300" label={`Comprobante ${formatReceiptStatus(receipt.status)}`} path={`/api/payment-receipts/${receipt.id}/file`} token={token} />
-                  <p className="-mt-2 px-4 text-xs text-zinc-500">{receipt.operationCode ?? "Sin codigo"} - {receipt.declaredAmount ? formatMoney(receipt.declaredAmount, receipt.currency ?? payment.currency) : "Sin monto declarado"}</p>
+                <div className="min-w-0 overflow-hidden rounded-xl border border-zinc-200 bg-white" key={receipt.id}>
+                  <PrivateFileLink className="p-4 text-sm hover:bg-rose-50/30" label={`Comprobante ${formatReceiptStatus(receipt.status)}`} path={`/api/payment-receipts/${receipt.id}/file`} token={token} />
+                  <p className="border-t border-zinc-100 px-4 py-2 text-xs leading-5 text-zinc-500 break-words">
+                    {receipt.operationCode ?? "Sin codigo"} - {receipt.declaredAmount ? formatMoney(receipt.declaredAmount, receipt.currency ?? payment.currency) : "Sin monto declarado"}
+                  </p>
                 </div>
               ))}
             </div>

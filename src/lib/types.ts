@@ -13,6 +13,7 @@ export type ApiError = {
   error?: string;
   title?: string;
   detail?: string;
+  errors?: Record<string, string[]>;
 };
 
 export type AuditLog = {
@@ -178,7 +179,7 @@ export type PaymentMethod = {
 export type Order = {
   id: string;
   userId: string;
-  addressId: string;
+  addressId: string | null;
   shippingAgencyId: string | null;
   couponId: string | null;
   status:

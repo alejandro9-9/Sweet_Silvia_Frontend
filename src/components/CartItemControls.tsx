@@ -18,16 +18,17 @@ export function CartItemImage({ item }: { item: GuestCartItem }) {
 type QuantityStepperProps = {
   label: string;
   value: number;
+  max?: number;
   onDecrease: () => void;
   onIncrease: () => void;
 };
 
-export function QuantityStepper({ label, value, onDecrease, onIncrease }: QuantityStepperProps) {
+export function QuantityStepper({ label, max, value, onDecrease, onIncrease }: QuantityStepperProps) {
   return (
-    <div aria-label={label} className="grid h-11 w-32 grid-cols-3 overflow-hidden rounded-lg border border-zinc-300 bg-[#f8f5f0]" role="group">
+    <div aria-label={label} className="grid h-9 w-24 grid-cols-3 overflow-hidden rounded-lg border border-zinc-300 bg-[#f8f5f0] sm:h-11 sm:w-32" role="group">
       <button aria-label="Disminuir cantidad" className="grid h-full place-items-center text-lg transition hover:bg-zinc-950 hover:text-white disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent" disabled={value <= 1} onClick={onDecrease} type="button">-</button>
       <span className="grid h-full place-items-center border-x border-zinc-300 bg-white text-sm font-semibold">{value}</span>
-      <button aria-label="Aumentar cantidad" className="grid h-full place-items-center text-lg transition hover:bg-zinc-950 hover:text-white" onClick={onIncrease} type="button">+</button>
+      <button aria-label="Aumentar cantidad" className="grid h-full place-items-center text-lg transition hover:bg-zinc-950 hover:text-white disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent" disabled={max != null && value >= max} onClick={onIncrease} type="button">+</button>
     </div>
   );
 }

@@ -73,16 +73,16 @@ export function CustomerProfile() {
     <div className="space-y-6">
       <section className="rounded-3xl border border-rose-100 bg-white p-6 shadow-sm sm:p-8">
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-700">Mi cuenta</p>
-        <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="font-serif text-4xl font-semibold tracking-normal sm:text-5xl">
-              Hola, {account?.name ?? user?.email}
+        <div className="mt-3 flex flex-col items-start gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="w-full min-w-0 sm:flex-1">
+            <h1 className="break-words font-serif text-2xl font-semibold leading-tight tracking-normal sm:text-5xl [overflow-wrap:anywhere]">
+              Hola, {account?.name?.trim() || "Sweet Reina"}
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-600">
               Revisa tus pedidos, seguimiento, comprobantes y datos personales desde un solo espacio.
             </p>
           </div>
-          <Link className="rounded-full bg-zinc-950 px-5 py-3 text-sm font-semibold uppercase tracking-[0.12em] text-white" href="/catalog">
+          <Link className="w-full rounded-full bg-zinc-950 px-5 py-3 text-center text-sm font-semibold uppercase tracking-[0.12em] text-white sm:w-auto" href="/catalog">
             Seguir comprando
           </Link>
         </div>
@@ -95,7 +95,7 @@ export function CustomerProfile() {
       </section>
 
       <section className="rounded-2xl border border-rose-100 bg-white p-2 shadow-sm">
-        <div className="grid gap-2 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           {profileSections.map((section) => (
             <button
               className={currentSection === section.id ? "rounded-xl bg-zinc-950 px-4 py-3 text-sm font-semibold text-white" : "rounded-xl px-4 py-3 text-sm font-semibold text-zinc-600 hover:bg-rose-50 hover:text-rose-800"}
@@ -158,6 +158,21 @@ const emptyAddressRequest: AddressRequest = {
   isDefault: false,
 };
 
+const deliveryDepartmentNames = new Set(["lima", "callao"]);
+
+function normalizeLocationName(name: string) {
+  return name.trim().toLocaleLowerCase("es-PE");
+}
+
+function isDeliveryDepartment(department: Department) {
+  return deliveryDepartmentNames.has(normalizeLocationName(department.name));
+}
+
+function isDeliveryProvince(departmentName: string, provinceName: string) {
+  const normalizedDepartment = normalizeLocationName(departmentName);
+  return deliveryDepartmentNames.has(normalizedDepartment) && normalizeLocationName(provinceName) === normalizedDepartment;
+}
+
 function ProfileDataPanel({
   account,
   addresses,
@@ -191,7 +206,7 @@ function ProfileDataPanel({
       apiRequest<Department[]>("/api/departments")
         .then((nextDepartments) => {
           if (isActive) {
-            setDepartments(nextDepartments);
+            setDepartments(nextDepartments.filter(isDeliveryDepartment));
           }
         })
         .catch(() => {
@@ -221,7 +236,8 @@ function ProfileDataPanel({
       apiRequest<Province[]>(`/api/provinces/department/${addressForm.departmentId}`)
         .then((nextProvinces) => {
           if (isActive) {
-            setProvinces(nextProvinces);
+            const selectedDepartment = departments.find((department) => department.id === addressForm.departmentId);
+            setProvinces(selectedDepartment ? nextProvinces.filter((province) => isDeliveryProvince(selectedDepartment.name, province.name)) : []);
           }
         })
         .catch(() => {
@@ -235,7 +251,7 @@ function ProfileDataPanel({
       isActive = false;
       window.clearTimeout(timeoutId);
     };
-  }, [addressForm.departmentId]);
+  }, [addressForm.departmentId, departments]);
 
   useEffect(() => {
     if (!addressForm.provinceId) {
@@ -430,62 +446,80 @@ function ProfileDataPanel({
           {isSubmitting ? "Guardando..." : "Guardar cambios"}
         </button>
       </form>
-      <aside className="rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-700">Direccion principal</p>
-        <h2 className="mt-2 text-xl font-semibold">{defaultAddress?.receiverName ?? "Sin direccion"}</h2>
-        <p className="mt-3 text-sm leading-6 text-zinc-600">{defaultAddress ? `${defaultAddress.line}${defaultAddress.references ? `, ${defaultAddress.references}` : ""}` : "Agrega una direccion durante tu siguiente compra."}</p>
-        {defaultAddress ? <p className="mt-3 text-sm font-semibold">{defaultAddress.receiverPhone}</p> : null}
+      <aside className="rounded-2xl border border-zinc-200 bg-zinc-950 p-6 text-white shadow-sm">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-300">Direccion principal</p>
+            <h2 className="mt-2 text-xl font-semibold">{defaultAddress?.receiverName ?? "Sin direccion"}</h2>
+          </div>
+          {defaultAddress ? <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-rose-200">Activa</span> : null}
+        </div>
+        <p className="mt-4 text-sm leading-6 text-zinc-300">{defaultAddress ? `${defaultAddress.line}${defaultAddress.references ? `, ${defaultAddress.references}` : ""}` : "Agrega una direccion para finalizar tus pedidos."}</p>
+        {defaultAddress ? <p className="mt-3 text-sm font-semibold text-white">{defaultAddress.receiverPhone}</p> : null}
+        <Link className="mt-5 inline-flex text-xs font-semibold uppercase tracking-[0.12em] text-rose-200 hover:text-white" href="#direcciones">
+          Administrar direcciones
+        </Link>
       </aside>
-      <div className="rounded-2xl border border-rose-100 bg-white p-6 shadow-sm xl:col-span-2">
+      <div className="rounded-2xl border border-rose-100 bg-white p-5 shadow-sm sm:p-6 xl:col-span-2" id="direcciones">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-700">Direcciones</p>
             <h2 className="mt-2 text-2xl font-semibold">Entrega y contacto</h2>
-            <p className="mt-2 text-sm text-zinc-500">Crea, edita o elimina las direcciones que usaras para tus pedidos.</p>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">Guarda la informacion que usaremos para delivery y para identificarte cuando elijas recojo en una agencia Olva.</p>
           </div>
-          <button className="admin-secondary-button" type="button" onClick={startAddressCreate}>
-            Nueva direccion
+          <button className="admin-secondary-button shrink-0" type="button" onClick={startAddressCreate}>
+            Agregar direccion
           </button>
         </div>
-        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_420px]">
-          <div className="space-y-3">
-            {addresses.length === 0 ? <p className="rounded-xl border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">Aun no tienes direcciones guardadas.</p> : null}
-            {addresses.map((address) => (
-              <article className="rounded-2xl border border-zinc-200 bg-stone-50 p-4 text-sm" key={address.id}>
-                <div className="flex flex-wrap justify-between gap-3">
-                  <div>
-                    <p className="font-semibold">{address.receiverName}</p>
-                    <p className="mt-1 text-zinc-600">{address.line}</p>
-                    {address.references ? <p className="mt-1 text-zinc-500">{address.references}</p> : null}
-                    <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">{address.receiverPhone}</p>
-                  </div>
-                  {address.isDefault ? <span className="h-fit rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.1em] text-rose-800">Principal</span> : null}
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <button className="rounded-lg bg-zinc-950 px-4 py-2 text-xs font-semibold uppercase tracking-[0.1em] text-white" type="button" onClick={() => startAddressEdit(address)}>
-                    Editar
-                  </button>
-                  <button className="rounded-lg border border-rose-200 px-4 py-2 text-xs font-semibold uppercase tracking-[0.1em] text-rose-800 disabled:opacity-50" disabled={isAddressSubmitting} type="button" onClick={() => void deleteAddress(address.id)}>
-                    Eliminar
-                  </button>
-                </div>
-              </article>
-            ))}
+        <div className="mt-6 space-y-6">
+          <div>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Guardadas ({addresses.length})</p>
+              {addresses.length > 0 ? <p className="text-xs text-zinc-400">Usa una como principal para agilizar tu compra.</p> : null}
+            </div>
+            {addresses.length === 0 ? <p className="rounded-xl border border-dashed border-zinc-200 bg-stone-50 p-5 text-sm leading-6 text-zinc-500">Aun no tienes direcciones guardadas. Agrega la primera para poder finalizar un pedido.</p> : null}
+            {addresses.length > 0 ? (
+              <ul className="divide-y divide-zinc-200 overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                {addresses.map((address) => (
+                  <li className={`grid gap-4 border-l-4 p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center ${address.isDefault ? "border-l-zinc-950 bg-stone-50" : "border-l-transparent"}`} key={address.id}>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold text-zinc-950">{address.receiverName}</p>
+                        {address.isDefault ? <span className="rounded-full bg-zinc-950 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-white">Principal</span> : null}
+                      </div>
+                      <p className="mt-1 truncate text-sm text-zinc-700">{address.line}</p>
+                      <p className="mt-1 text-xs text-zinc-500">{address.receiverPhone}{address.references ? ` - ${address.references}` : ""}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 md:justify-end">
+                      <button className="rounded-lg bg-zinc-950 px-4 py-2 text-xs font-semibold uppercase tracking-[0.1em] text-white" type="button" onClick={() => startAddressEdit(address)}>
+                        Editar
+                      </button>
+                      <button className="rounded-lg border border-rose-200 px-4 py-2 text-xs font-semibold uppercase tracking-[0.1em] text-rose-800 disabled:opacity-50" disabled={isAddressSubmitting} type="button" onClick={() => void deleteAddress(address.id)}>
+                        Eliminar
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
-          <form className="rounded-2xl border border-rose-100 bg-rose-50/30 p-5" onSubmit={handleAddressSubmit}>
+          <form className="rounded-xl border border-zinc-200 bg-stone-50 p-5 sm:p-6" onSubmit={handleAddressSubmit}>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-700">{editingAddressId ? "Editar direccion" : "Nueva direccion"}</p>
-            <div className="mt-4 grid gap-3">
+            <p className="mt-2 text-sm leading-5 text-zinc-500">Completa los datos del receptor y la ubicacion exacta. El delivery esta disponible solo en Lima/Lima y Callao/Callao.</p>
+            <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               <EditableField label="Recibe" value={addressForm.receiverName} onChange={(value) => updateAddressField("receiverName", value)} required />
               <EditableField label="Telefono de contacto" value={addressForm.receiverPhone} onChange={(value) => updateAddressField("receiverPhone", value)} required />
               <AddressSelect label="Departamento" value={addressForm.departmentId} onChange={(value) => updateAddressField("departmentId", value)} options={departments.map((department) => ({ id: department.id, name: department.name }))} />
               <AddressSelect label="Provincia" value={addressForm.provinceId} onChange={(value) => updateAddressField("provinceId", value)} options={provinces.map((province) => ({ id: province.id, name: province.name }))} disabled={!addressForm.departmentId} />
               <AddressSelect label="Distrito" value={addressForm.districtId} onChange={(value) => updateAddressField("districtId", value)} options={districts.map((district) => ({ id: district.id, name: district.name }))} disabled={!addressForm.provinceId} />
-              <EditableField label="Direccion" value={addressForm.line} onChange={(value) => updateAddressField("line", value)} required />
-              <label className="block text-sm font-semibold">
+              <div className="md:col-span-2 xl:col-span-2">
+                <EditableField label="Direccion" value={addressForm.line} onChange={(value) => updateAddressField("line", value)} required />
+              </div>
+              <label className="block text-sm font-semibold md:col-span-2 xl:col-span-2">
                 Referencias
                 <textarea className="admin-input mt-2 min-h-20" value={addressForm.references ?? ""} onChange={(event) => updateAddressField("references", event.target.value)} />
               </label>
-              <label className="flex items-center gap-3 rounded-xl border border-rose-100 bg-white px-4 py-3 text-sm font-semibold">
+              <label className="flex items-center gap-3 self-end rounded-xl border border-rose-100 bg-white px-4 py-3 text-sm font-semibold">
                 <input checked={addressForm.isDefault} type="checkbox" onChange={(event) => updateAddressField("isDefault", event.target.checked)} />
                 Usar como direccion principal
               </label>

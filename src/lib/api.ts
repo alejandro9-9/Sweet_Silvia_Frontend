@@ -70,12 +70,13 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     const payload = text ? safeParseJson(text) : null;
 
     if (!response.ok) {
-      const message =
-        payload?.message ?? payload?.error ?? payload?.detail ?? payload?.title ?? "La solicitud no pudo completarse.";
+      const message = getApiErrorMessage(payload, "La solicitud no pudo completarse.");
       throw new ApiClientError(message, response.status, payload);
     }
 
     return payload as T;
+  } catch (error) {
+    throw toApiClientError(error, "No pudimos conectar con el servidor. Intenta nuevamente.");
   } finally {
     requestControl.dispose();
   }
@@ -107,11 +108,13 @@ export async function apiDownload(path: string, token: string | null) {
     if (!response.ok) {
       const text = await response.text();
       const payload = text ? safeParseJson(text) : null;
-      const message = payload?.message ?? payload?.error ?? payload?.detail ?? payload?.title ?? "El archivo no pudo abrirse.";
+      const message = getApiErrorMessage(payload, "El archivo no pudo abrirse.");
       throw new ApiClientError(message, response.status, payload);
     }
 
     return response.blob();
+  } catch (error) {
+    throw toApiClientError(error, "No pudimos abrir el archivo. Intenta nuevamente.");
   } finally {
     requestControl.dispose();
   }
@@ -131,6 +134,33 @@ function safeParseJson(text: string) {
   } catch {
     return null;
   }
+}
+
+function getApiErrorMessage(payload: ApiError | null, fallback: string) {
+  const directMessage = payload?.message ?? payload?.error ?? payload?.detail;
+  if (directMessage) {
+    return directMessage;
+  }
+
+  const validationMessages = Object.entries(payload?.errors ?? {})
+    .flatMap(([field, messages]) => messages.map((message) => `${field}: ${message}`))
+    .filter(Boolean);
+
+  return validationMessages.length > 0
+    ? validationMessages.join(" ")
+    : payload?.title ?? fallback;
+}
+
+function toApiClientError(error: unknown, fallback: string) {
+  if (error instanceof ApiClientError) {
+    return error;
+  }
+
+  if (error instanceof Error && error.name === "AbortError") {
+    return new ApiClientError("La solicitud tardo demasiado. Intenta nuevamente.", 0, null);
+  }
+
+  return new ApiClientError(fallback, 0, null);
 }
 
 function createRequestControl(callerSignal: AbortSignal | null | undefined, timeoutMs: number) {

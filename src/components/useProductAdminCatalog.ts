@@ -104,11 +104,14 @@ export function useProductAdminCatalog({ isAdministrator, token }: UseProductAdm
     setMessage(successMessage);
   }
 
-  async function deleteEntity(endpoint: string, successMessage: string) {
+  async function deleteEntity(endpoint: string, successMessage: string, reloadSelectedVariants = false) {
     if (!isAdministrator || !window.confirm("Esta accion desactivara el registro. Continuar?")) return;
     try {
       await apiRequest<void>(endpoint, { method: "DELETE", token });
       await loadCatalogBase();
+      if (reloadSelectedVariants && selectedProductId) {
+        await loadVariants(selectedProductId);
+      }
       setMessage(successMessage);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo desactivar el registro.");

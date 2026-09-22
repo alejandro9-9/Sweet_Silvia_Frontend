@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import { AdminPagination } from "@/components/AdminPagination";
 import { apiRequest } from "@/lib/api";
 import { formatMoney, shortId } from "@/lib/format";
 import { formatDate, formatOrderStatus, formatPaymentStatus, formatShipmentStatus } from "@/lib/order-format";
@@ -50,11 +51,19 @@ export function OrdersWorkspace({
   onCreateShipmentEvent: (shipmentId: string, status: ShipmentStatus, description: string, location: string, eventDate: string) => Promise<void>;
 }) {
   const [previewOrderId, setPreviewOrderId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 8;
   const previewOrder = orders.find((order) => order.id === previewOrderId) ?? null;
   const deliveryDetails = useOrderDeliveryDetails(previewOrder ?? selectedOrder, token);
+  const pageCount = Math.max(1, Math.ceil(orders.length / pageSize));
+  const visibleOrders = orders.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage((currentPage) => Math.min(currentPage, pageCount));
+  }, [pageCount]);
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+    <div>
       <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
         <PanelHeader eyebrow="Pedidos" title="Listado de ordenes" text="Solo se muestran pedidos que ya entraron a revision, pago o preparacion. El carrito no aparece aqui." />
         <div className="overflow-x-auto">
@@ -69,7 +78,7 @@ export function OrdersWorkspace({
               </tr>
             </thead>
             <tbody>
-              {orders.map((order) => {
+              {visibleOrders.map((order) => {
                 const needsAttention = order.status === "receiptInReview" || order.status === "paid" || order.status === "preparing";
                 return <tr
                   aria-label={"Seleccionar orden " + shortId(order.id)}
@@ -108,10 +117,10 @@ export function OrdersWorkspace({
             </tbody>
           </table>
         </div>
+        <AdminPagination page={page} pageCount={pageCount} total={orders.length} onPageChange={setPage} />
       </section>
 
-      <OrderDetail couriers={couriers} order={selectedOrder} items={orderItems} payments={payments} statusHistory={statusHistory} shipments={shipments} usersById={usersById} deliveryDetails={deliveryDetails} onChangeShipmentStatus={onChangeShipmentStatus} onChangeStatus={onChangeStatus} onRegisterTracking={onRegisterTracking} onCreateShipmentEvent={onCreateShipmentEvent} />
-      {previewOrder ? <OrderPreviewModal couriers={couriers} order={previewOrder} items={selectedOrder?.id === previewOrder.id ? orderItems : []} payments={payments} statusHistory={selectedOrder?.id === previewOrder.id ? statusHistory : []} shipments={selectedOrder?.id === previewOrder.id ? shipments : []} usersById={usersById} deliveryDetails={deliveryDetails} onClose={() => setPreviewOrderId(null)} /> : null}
+      {previewOrder ? <OrderPreviewModal couriers={couriers} order={previewOrder} items={selectedOrder?.id === previewOrder.id ? orderItems : []} payments={payments} statusHistory={selectedOrder?.id === previewOrder.id ? statusHistory : []} shipments={selectedOrder?.id === previewOrder.id ? shipments : []} usersById={usersById} deliveryDetails={deliveryDetails} onChangeShipmentStatus={onChangeShipmentStatus} onChangeStatus={onChangeStatus} onRegisterTracking={onRegisterTracking} onCreateShipmentEvent={onCreateShipmentEvent} onClose={() => setPreviewOrderId(null)} /> : null}
     </div>
   );
 }
@@ -200,6 +209,10 @@ function OrderPreviewModal({
   shipments,
   usersById,
   deliveryDetails,
+  onChangeStatus,
+  onChangeShipmentStatus,
+  onRegisterTracking,
+  onCreateShipmentEvent,
   onClose,
 }: {
   couriers: Courier[];
@@ -210,17 +223,15 @@ function OrderPreviewModal({
   shipments: Shipment[];
   usersById: Map<string, UserAccount>;
   deliveryDetails: OrderDeliveryDetails;
+  onChangeShipmentStatus: (shipmentId: string, status: ShipmentStatus, observation: string) => Promise<void>;
+  onChangeStatus: (status: Order["status"], observation: string) => Promise<void>;
+  onRegisterTracking: (courierId: string, trackingCode: string, externalShipmentCode: string, estimatedDeliveryAt: string, observation: string) => Promise<void>;
+  onCreateShipmentEvent: (shipmentId: string, status: ShipmentStatus, description: string, location: string, eventDate: string) => Promise<void>;
   onClose: () => void;
 }) {
-  const { address, department, province, district, shippingAgency } = deliveryDetails;
-  const customer = usersById.get(order.userId);
-  const orderPayments = payments.filter((payment) => payment.orderId === order.id);
-
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
+      if (event.key === "Escape") onClose();
     };
     document.addEventListener("keydown", handleKeyDown);
     const previousOverflow = document.body.style.overflow;
@@ -232,120 +243,9 @@ function OrderPreviewModal({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/45 p-4" role="presentation" onClick={onClose}>
-      <section className="flex max-h-[min(90vh,760px)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="order-preview-title" onClick={(event) => event.stopPropagation()}>
-        <header className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-800">Vista de orden</p>
-            <h2 className="mt-1 text-2xl font-semibold" id="order-preview-title">Orden #{shortId(order.id)}</h2>
-            <p className="mt-1 text-sm text-zinc-600">Informacion del pedido en modo visualizacion.</p>
-          </div>
-          <button aria-label="Cerrar vista de orden" className="admin-secondary-button shrink-0" onClick={onClose} type="button">Cerrar</button>
-        </header>
-
-        <div className="overflow-y-auto p-5">
-          <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 pb-4">
-            <StatusBadge attention={order.status === "receiptInReview" || order.status === "paid" || order.status === "preparing"} label={formatOrderStatus(order.status)} />
-            <span className="text-sm text-zinc-500">Creada {formatDate(order.createdAt)}</span>
-          </div>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <InfoBlock title="Cliente">
-              <p className="font-semibold">{customer ? `${customer.name} ${customer.paternalSurname}` : "Cliente no disponible"}</p>
-              <p className="mt-1 break-all text-zinc-600">{customer?.email ?? shortId(order.userId)}</p>
-              {customer?.phone ? <p className="mt-1 text-zinc-600">{customer.phone}</p> : null}
-            </InfoBlock>
-            <InfoBlock title="Pago">
-              {orderPayments.length > 0 ? orderPayments.map((payment) => (
-                <div className="border-b border-zinc-200 pb-2 text-sm last:border-0 last:pb-0" key={payment.id}>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="font-medium">{formatPaymentStatus(payment.status)}</span>
-                    <span className="shrink-0 font-semibold">{formatMoney(payment.amount, payment.currency)}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-zinc-500">{formatDate(payment.createdAt)}{payment.transactionCode ? ` · ${payment.transactionCode}` : ""}</p>
-                </div>
-              )) : <p className="text-sm text-zinc-500">Sin pago registrado.</p>}
-            </InfoBlock>
-          </div>
-
-          <div className="mt-3 rounded-lg border border-rose-100 bg-rose-50/40 p-4 text-sm">
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-rose-800">Entrega</p>
-            <p className="mt-1 font-semibold">
-              {address ? `Delivery ${department?.destinationType === "lima" ? "Lima" : "provincial"}` : shippingAgency ? "Recojo en agencia Olva" : "Ubicacion no disponible"}
-            </p>
-            {address ? (
-              <>
-                <p className="mt-1">{[department?.name, province?.name, district?.name].filter(Boolean).join(" / ") || "Ubicacion por confirmar"}</p>
-                <p className="mt-1 text-zinc-600">{address.line}</p>
-                {address.references ? <p className="mt-1 text-zinc-600">Referencia: {address.references}</p> : null}
-                <p className="mt-1 text-zinc-600">Recibe: {address.receiverName} · {address.receiverPhone}</p>
-              </>
-            ) : shippingAgency ? (
-              <>
-                <p className="mt-1">{shippingAgency.name}{shippingAgency.code ? ` (${shippingAgency.code})` : ""}</p>
-                <p className="mt-1 text-zinc-600">{[shippingAgency.department, shippingAgency.province, shippingAgency.district].filter(Boolean).join(" / ") || "Ubicacion por confirmar"}</p>
-                {shippingAgency.address ? <p className="mt-1 text-zinc-600">{shippingAgency.address}</p> : null}
-                {shippingAgency.phone ? <p className="mt-1 text-zinc-600">{shippingAgency.phone}</p> : null}
-              </>
-            ) : <p className="mt-1 text-zinc-600">No hay direccion o agencia asociada.</p>}
-          </div>
-
-          <div className="mt-5">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">Prendas</h3>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              {items.length > 0 ? items.map((item) => (
-                <div className="rounded-lg border border-zinc-200 bg-stone-50 p-3 text-sm" key={item.id}>
-                  <p className="font-semibold uppercase tracking-[0.05em]">{item.productName}</p>
-                  <p className="mt-1 text-zinc-500">{item.size} - {item.color} - {item.sku}</p>
-                  <p className="mt-2 font-semibold">{item.quantity} x {formatMoney(item.unitPrice, item.currency)}</p>
-                  <p className="mt-1 text-xs text-zinc-500">Subtotal: {formatMoney(item.subtotal, item.currency)}</p>
-                </div>
-              )) : <p className="text-sm text-zinc-500">Cargando prendas o no hay prendas registradas.</p>}
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-3 md:grid-cols-2">
-            <InfoBlock title="Resumen">
-              <div className="space-y-2">
-                <SummaryRow label="Subtotal" value={formatMoney(order.subtotal, order.currency)} />
-                <SummaryRow label="Descuento" value={formatMoney(order.discountTotal, order.currency)} />
-                <SummaryRow label="Envio" value={formatMoney(order.shippingCost, order.currency)} />
-                <SummaryRow label="Total" value={formatMoney(order.total, order.currency)} strong />
-              </div>
-            </InfoBlock>
-            <InfoBlock title="Envio">
-              {shipments.length > 0 ? shipments.map((shipment) => (
-                <div className="text-sm" key={shipment.id}>
-                  <p className="font-semibold">{couriers.find((courier) => courier.id === shipment.courierId)?.name ?? "Courier no disponible"}</p>
-                  <p className="mt-1 text-zinc-600">{formatShipmentStatus(shipment.status)}</p>
-                  {shipment.trackingCode ? <p className="mt-1 text-zinc-600">Seguimiento: {shipment.trackingCode}</p> : null}
-                  {shipment.externalShipmentCode ? <p className="mt-1 text-zinc-600">Codigo externo: {shipment.externalShipmentCode}</p> : null}
-                  {shipment.estimatedDeliveryAt ? <p className="mt-1 text-zinc-600">Entrega estimada: {formatDate(shipment.estimatedDeliveryAt)}</p> : null}
-                  {shipment.observation ? <p className="mt-1 text-zinc-600">Observacion: {shipment.observation}</p> : null}
-                </div>
-              )) : <p className="text-sm text-zinc-500">No hay envio registrado.</p>}
-            </InfoBlock>
-          </div>
-
-          {statusHistory.length > 0 ? (
-            <div className="mt-5 border-t border-zinc-200 pt-4">
-              <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">Historial del pedido</h3>
-              <div className="mt-3 space-y-3 border-l-2 border-rose-100 pl-4">
-                {statusHistory.map((entry) => (
-                  <div className="relative text-sm" key={entry.id}>
-                    <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full bg-rose-600 ring-4 ring-white" />
-                    <p className="font-semibold">{entry.previousStatus ? `${formatOrderStatus(entry.previousStatus)} -> ` : ""}{formatOrderStatus(entry.newStatus)}</p>
-                    <p className="mt-1 text-zinc-500">{formatDate(entry.changedAt)}{entry.observation ? ` - ${entry.observation}` : ""}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </div>
-
-        <footer className="flex justify-end border-t border-zinc-200 bg-stone-50 px-5 py-3">
-          <button className="admin-primary-button" onClick={onClose} type="button">Cerrar vista</button>
-        </footer>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/55 p-4" role="presentation" onClick={onClose}>
+      <section className="max-h-[min(94vh,900px)] w-full max-w-3xl overflow-y-auto rounded-xl bg-white shadow-2xl" role="dialog" aria-modal="true" aria-label={`Gestionar orden ${shortId(order.id)}`} onClick={(event) => event.stopPropagation()}>
+        <OrderDetail couriers={couriers} order={order} items={items} payments={payments} statusHistory={statusHistory} shipments={shipments} usersById={usersById} deliveryDetails={deliveryDetails} modal onClose={onClose} onChangeShipmentStatus={onChangeShipmentStatus} onChangeStatus={onChangeStatus} onRegisterTracking={onRegisterTracking} onCreateShipmentEvent={onCreateShipmentEvent} />
       </section>
     </div>
   );
@@ -360,6 +260,8 @@ function OrderDetail({
   shipments,
   usersById,
   deliveryDetails,
+  modal = false,
+  onClose,
   onChangeStatus,
   onChangeShipmentStatus,
   onRegisterTracking,
@@ -373,6 +275,8 @@ function OrderDetail({
   shipments: Shipment[];
   usersById: Map<string, UserAccount>;
   deliveryDetails: OrderDeliveryDetails;
+  modal?: boolean;
+  onClose?: () => void;
   onChangeShipmentStatus: (shipmentId: string, status: ShipmentStatus, observation: string) => Promise<void>;
   onChangeStatus: (status: Order["status"], observation: string) => Promise<void>;
   onRegisterTracking: (courierId: string, trackingCode: string, externalShipmentCode: string, estimatedDeliveryAt: string, observation: string) => Promise<void>;
@@ -491,7 +395,8 @@ function OrderDetail({
   const availableShipmentStatuses = currentShipment ? [currentShipment.status, ...shipmentTransitions[currentShipment.status]] : shipmentStatuses;
 
   return (
-    <aside className="h-fit rounded-lg border border-zinc-200 bg-white p-5 shadow-sm xl:sticky xl:top-6">
+    <aside className={modal ? "relative p-5" : "h-fit rounded-lg border border-zinc-200 bg-white p-5 shadow-sm xl:sticky xl:top-6"}>
+      {modal && onClose ? <button aria-label="Cerrar gestion de orden" className="absolute right-5 top-5 z-10 admin-secondary-button" onClick={onClose} type="button">Cerrar</button> : null}
       <PanelHeader eyebrow="Detalle" title={order ? `Orden #${shortId(order.id)}` : "Sin seleccion"} text="Productos, montos y avance del pedido." />
       {order ? (
         <>

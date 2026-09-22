@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import { useEffect } from "react";
+import { AdminPagination } from "@/components/AdminPagination";
 import { formatAuditAction, formatAuditActionForLog, formatAuditEntity, formatAuditIp, formatAuditUserAgent, uniqueSorted } from "@/lib/audit-utils";
 import { shortId } from "@/lib/format";
 import { formatDateTime } from "@/lib/order-format";
@@ -15,17 +17,31 @@ export function AdminAuditWorkspace({
 }) {
   const [actionFilter, setActionFilter] = useState("");
   const [entityFilter, setEntityFilter] = useState("");
-  const actions = useMemo(() => uniqueSorted(auditLogs.map((log) => log.action)), [auditLogs]);
+  const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const actions = useMemo(() => uniqueSorted(auditLogs.map((log) => formatAuditAction(log.action))), [auditLogs]);
   const entities = useMemo(() => uniqueSorted(auditLogs.map((log) => log.entityName)), [auditLogs]);
   const filteredLogs = useMemo(
     () =>
       auditLogs.filter((log) => {
-        const matchesAction = actionFilter ? log.action === actionFilter : true;
+        const matchesAction = actionFilter ? formatAuditAction(log.action) === actionFilter : true;
         const matchesEntity = entityFilter ? log.entityName === entityFilter : true;
         return matchesAction && matchesEntity;
       }),
     [actionFilter, auditLogs, entityFilter],
   );
+  const selectedLog = filteredLogs.find((log) => log.id === selectedLogId) ?? null;
+  const pageCount = Math.max(1, Math.ceil(filteredLogs.length / pageSize));
+  const visibleLogs = filteredLogs.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [actionFilter, entityFilter]);
+
+  useEffect(() => {
+    setPage((currentPage) => Math.min(currentPage, pageCount));
+  }, [pageCount]);
 
   return (
     <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -42,7 +58,7 @@ export function AdminAuditWorkspace({
             <option value="">Todas las acciones</option>
             {actions.map((action) => (
               <option key={action} value={action}>
-                {formatAuditAction(action)}
+                {action}
               </option>
             ))}
           </select>
@@ -61,39 +77,40 @@ export function AdminAuditWorkspace({
       </div>
 
       <div className="overflow-x-auto">
-        <div className="min-w-[1280px] divide-y divide-zinc-100">
-          <div className="grid grid-cols-[120px_180px_120px_140px_160px_minmax(300px,1fr)_190px] gap-4 bg-white px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">
+        <div className="min-w-[1080px] divide-y divide-zinc-100">
+          <div className="grid grid-cols-[120px_180px_120px_140px_160px_minmax(300px,1fr)] gap-4 bg-white px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">
             <span>Fecha</span>
             <span>Usuario</span>
             <span>Rol</span>
             <span>Accion</span>
             <span>Entidad</span>
             <span>Detalle</span>
-            <span>Origen</span>
           </div>
-          {filteredLogs.map((log) => (
-            <AuditLogRow key={log.id} log={log} productsById={productsById} usersById={usersById} />
+          {visibleLogs.map((log) => (
+            <AuditLogRow key={log.id} log={log} usersById={usersById} onSelect={() => setSelectedLogId(log.id)} />
           ))}
           {filteredLogs.length === 0 ? (
             <p className="px-5 py-8 text-center text-sm text-zinc-500">No hay acciones registradas con los filtros seleccionados.</p>
           ) : null}
         </div>
       </div>
+      <AdminPagination page={page} pageCount={pageCount} total={filteredLogs.length} onPageChange={setPage} />
+      {selectedLog ? <AuditLogModal log={selectedLog} productsById={productsById} usersById={usersById} onClose={() => setSelectedLogId(null)} /> : null}
     </section>
   );
 }
 
 function AuditLogRow({
   log,
-  productsById,
   usersById,
+  onSelect,
 }: {
   log: AuditLog;
-  productsById: Map<string, Product>;
   usersById: Map<string, UserAccount>;
+  onSelect: () => void;
 }) {
   return (
-    <article className="grid grid-cols-[120px_180px_120px_140px_160px_minmax(300px,1fr)_190px] gap-4 px-5 py-4 text-sm hover:bg-stone-50">
+    <article className="grid cursor-pointer grid-cols-[120px_180px_120px_140px_160px_minmax(300px,1fr)] gap-4 px-5 py-4 text-sm hover:bg-stone-50" onClick={onSelect} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(); } }} role="button" tabIndex={0}>
       <div className="text-zinc-600">
         <AuditMobileLabel label="Fecha" />
         {formatDateTime(log.occurredAt)}
@@ -118,14 +135,59 @@ function AuditLogRow({
       </div>
       <div>
         <AuditMobileLabel label="Detalle" />
-        <AuditDetail log={log} productsById={productsById} />
-      </div>
-      <div className="text-xs text-zinc-500">
-        <AuditMobileLabel label="Origen" />
-        <p>{formatAuditIp(log.ipAddress)}</p>
-        <p className="mt-1 break-words">{formatAuditUserAgent(log.userAgent)}</p>
+        <p className="text-zinc-500">Seleccionar para ver detalle</p>
       </div>
     </article>
+  );
+}
+
+function AuditLogModal({
+  log,
+  productsById,
+  usersById,
+  onClose,
+}: {
+  log: AuditLog;
+  productsById: Map<string, Product>;
+  usersById: Map<string, UserAccount>;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/55 p-4" role="presentation" onClick={onClose}>
+      <section className="relative w-full max-w-2xl rounded-xl border border-zinc-200 bg-white p-5 shadow-2xl" role="dialog" aria-modal="true" aria-label="Detalle de auditoria" onClick={(event) => event.stopPropagation()}>
+        <button aria-label="Cerrar auditoria" className="absolute right-5 top-5 admin-secondary-button" onClick={onClose} type="button">Cerrar</button>
+        <PanelHeader eyebrow="Detalle de auditoria" title={formatAuditActionForLog(log)} text={`Registro ${shortId(log.id)} · ${formatDateTime(log.occurredAt)}`} />
+        <div className="grid gap-3 border-y border-zinc-200 py-4 text-sm sm:grid-cols-2">
+          <SummaryRow label="Usuario" value={log.actorUserId ? usersById.get(log.actorUserId)?.email ?? `Usuario #${shortId(log.actorUserId)}` : "Sistema"} />
+          <SummaryRow label="Rol" value={log.actorRole ?? "Sistema"} />
+          <SummaryRow label="Entidad" value={`${formatAuditEntity(log.entityName)}${log.entityId ? ` #${shortId(log.entityId)}` : ""}`} />
+          <SummaryRow label="Origen" value={formatAuditIp(log.ipAddress)} />
+        </div>
+        <div className="mt-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-800">Detalle registrado</p>
+          <div className="mt-3 rounded-lg border border-zinc-200 bg-stone-50 p-4 text-sm">
+            <AuditDetail log={log} productsById={productsById} />
+          </div>
+        </div>
+        <div className="mt-5 border-t border-zinc-200 pt-4 text-xs text-zinc-500">
+          <p className="font-semibold text-zinc-700">Navegador</p>
+          <p className="mt-1 break-words">{formatAuditUserAgent(log.userAgent)}</p>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -145,6 +207,10 @@ function PanelHeader({ eyebrow, title, text }: { eyebrow: string; title: string;
 
 function StatusBadge({ label }: { label: string }) {
   return <span className="inline-flex rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.08em] text-zinc-700">{label}</span>;
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return <div className="flex justify-between gap-4 text-zinc-600"><span>{label}</span><span className="text-right font-medium text-zinc-900">{value}</span></div>;
 }
 
 function AuditDetail({ log, productsById }: { log: AuditLog; productsById: Map<string, Product> }) {

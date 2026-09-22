@@ -28,6 +28,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
   const sessionRestorePromise = useRef<Promise<string | null> | null>(null);
+  const refreshInFlight = useRef<Promise<string | null> | null>(null);
   const authChangeVersion = useRef(0);
 
   const persistToken = useCallback((nextToken: string | null) => {
@@ -44,15 +45,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refresh = useCallback(async () => {
-    const requestVersion = authChangeVersion.current;
-    const nextToken = await requestRefresh();
-    if (requestVersion !== authChangeVersion.current) {
-      return null;
+    if (refreshInFlight.current) {
+      return refreshInFlight.current;
     }
 
-    persistToken(nextToken);
-    setIsReady(true);
-    return nextToken;
+    const requestVersion = authChangeVersion.current;
+    const refreshRequest = (async () => {
+      const nextToken = await requestRefresh();
+      if (requestVersion !== authChangeVersion.current) {
+        return null;
+      }
+
+      persistToken(nextToken);
+      setIsReady(true);
+      return nextToken;
+    })();
+
+    refreshInFlight.current = refreshRequest;
+    try {
+      return await refreshRequest;
+    } finally {
+      if (refreshInFlight.current === refreshRequest) {
+        refreshInFlight.current = null;
+      }
+    }
   }, [persistToken, requestRefresh]);
 
   useEffect(function configureApiRefresh() {
@@ -70,6 +86,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => configureAuthRefresh(null);
   }, [persistToken, refresh]);
+
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+
+    const expiresAt = getJwtExpiration(token);
+    if (!expiresAt) {
+      return;
+    }
+
+    const refreshLeadTime = 60_000;
+    const delay = Math.max(1_000, expiresAt - Date.now() - refreshLeadTime);
+    const timeoutId = window.setTimeout(() => {
+      void refresh().catch(() => {
+        // Las peticiones protegidas volveran a intentar el refresh si el servidor estuvo temporalmente fuera de linea.
+      });
+    }, delay);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [refresh, token]);
 
   useEffect(function restoreSessionFromCookie() {
     let isActive = true;
@@ -208,6 +245,21 @@ function decodeJwtUser(token: string): AuthUser | null {
       role: json.role ?? json["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"] as ApiRole,
       roleId: json.roleId,
     };
+  } catch {
+    return null;
+  }
+}
+
+function getJwtExpiration(token: string) {
+  const payload = token.split(".")[1];
+  if (!payload) {
+    return null;
+  }
+
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const json = JSON.parse(atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=")));
+    return typeof json.exp === "number" ? json.exp * 1000 : null;
   } catch {
     return null;
   }

@@ -159,6 +159,14 @@ export type OlvaAgency = {
   lastSyncedAt: string;
 };
 
+export type OlvaQuoteLocation = {
+  ubigeo: string;
+  department: string;
+  province: string;
+  district: string;
+  agencyCount: number;
+};
+
 export type Courier = {
   id: string;
   name: string;

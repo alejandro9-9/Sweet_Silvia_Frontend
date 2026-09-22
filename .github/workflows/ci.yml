@@ -1,0 +1,27 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test
+      - run: npm run lint
+      - run: npm run build
+        env:
+          VITE_API_URL: https://ci.invalid
+          VITE_ENABLE_MOCKS: "false"
+          VITE_IZIPAY_ENABLED: "false"
+          VITE_GOOGLE_CLIENT_ID: ""
+      - run: npm audit --omit=dev
